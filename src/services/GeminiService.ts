@@ -833,6 +833,9 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
         };
       }
       
+      // Clean markdown from response (WhatsApp doesn't support markdown well)
+      responseText = this.cleanMarkdown(responseText);
+      
       return {
         text: responseText,
       };
