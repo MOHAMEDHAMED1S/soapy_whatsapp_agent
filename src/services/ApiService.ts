@@ -14,6 +14,9 @@ import {
   InitiatePaymentRequest,
   InitiatePaymentResponse,
   PaymentStatusResponse,
+  OrderTrackingResponse,
+  ValidateDiscountCodeRequest,
+  ValidateDiscountCodeResponse,
 } from '../types/api.types';
 import { Product } from '../types/product.types';
 
@@ -202,6 +205,21 @@ export class ApiService {
     }
   }
 
+  // Validate discount code
+  async validateDiscountCode(request: ValidateDiscountCodeRequest): Promise<ApiResponse<ValidateDiscountCodeResponse>> {
+    try {
+      const response = await this.client.post<ApiResponse<ValidateDiscountCodeResponse>>(
+        '/checkout/validate-discount',
+        request
+      );
+      return response.data;
+    } catch (error: any) {
+      logger.error('Error validating discount code:', error);
+      const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
+      throw new Error(`Failed to validate discount code: ${errorMessage}`);
+    }
+  }
+
   // Calculate order total
   async calculateTotal(request: CalculateTotalRequest): Promise<ApiResponse<OrderTotal>> {
     try {
@@ -272,6 +290,20 @@ export class ApiService {
     } catch (error: any) {
       logger.error(`Error fetching payment status for order ${orderId}:`, error);
       throw new Error(`Failed to fetch payment status: ${error.message}`);
+    }
+  }
+
+  // Track order by order number
+  async trackOrder(orderNumber: string | number): Promise<ApiResponse<OrderTrackingResponse>> {
+    try {
+      const response = await this.client.get<ApiResponse<OrderTrackingResponse>>(
+        `/orders/${orderNumber}/track`
+      );
+      return response.data;
+    } catch (error: any) {
+      logger.error(`Error tracking order ${orderNumber}:`, error);
+      const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
+      throw new Error(`Failed to track order: ${errorMessage}`);
     }
   }
 }

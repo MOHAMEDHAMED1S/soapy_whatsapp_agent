@@ -110,6 +110,70 @@ export class WhatsAppBot {
     }
   }
 
+  private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
+
+  // Send typing indicator and keep it alive
+  async sendTypingIndicator(phone: string): Promise<void> {
+    try {
+      if (!this.isReady) {
+        return;
+      }
+
+      const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
+      const chat = await this.client.getChatById(chatId);
+      
+      // Send initial typing indicator
+      await chat.sendStateTyping();
+      logger.debug(`Typing indicator sent to ${phone}`);
+
+      // Clear any existing interval for this phone
+      if (this.typingIntervals.has(phone)) {
+        clearInterval(this.typingIntervals.get(phone)!);
+      }
+
+      // Keep typing indicator alive by refreshing it every 10 seconds
+      // WhatsApp automatically clears typing indicator after ~15 seconds
+      const interval = setInterval(async () => {
+        try {
+          if (this.isReady) {
+            await chat.sendStateTyping();
+            logger.debug(`Typing indicator refreshed for ${phone}`);
+          }
+        } catch (error) {
+          logger.error(`Error refreshing typing indicator for ${phone}:`, error);
+        }
+      }, 10000); // Refresh every 10 seconds
+
+      this.typingIntervals.set(phone, interval);
+    } catch (error) {
+      logger.error(`Error sending typing indicator to ${phone}:`, error);
+      // Don't throw error - typing indicator is optional
+    }
+  }
+
+  // Clear typing indicator
+  async clearTypingIndicator(phone: string): Promise<void> {
+    try {
+      if (!this.isReady) {
+        return;
+      }
+
+      // Clear the interval that keeps typing indicator alive
+      if (this.typingIntervals.has(phone)) {
+        clearInterval(this.typingIntervals.get(phone)!);
+        this.typingIntervals.delete(phone);
+      }
+
+      const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
+      const chat = await this.client.getChatById(chatId);
+      await chat.clearState();
+      logger.debug(`Typing indicator cleared for ${phone}`);
+    } catch (error) {
+      logger.error(`Error clearing typing indicator for ${phone}:`, error);
+      // Don't throw error - clearing typing indicator is optional
+    }
+  }
+
   // Send message
   async sendMessage(phone: string, message: string): Promise<Message> {
     try {
@@ -140,6 +204,15 @@ export class WhatsAppBot {
   // Destroy the bot
   async destroy(): Promise<void> {
     try {
+      // Clear all typing intervals
+      this.typingIntervals.forEach((interval, phone) => {
+        clearInterval(interval);
+        this.clearTypingIndicator(phone).catch(() => {
+          // Ignore errors when clearing typing indicators during destroy
+        });
+      });
+      this.typingIntervals.clear();
+
       await this.client.destroy();
       this.isReady = false;
       logger.info('WhatsApp bot destroyed');

@@ -68,17 +68,60 @@ export interface OrderTotal {
   currency: string;
 }
 
+export interface ValidateDiscountCodeRequest {
+  discount_code: string;
+  items: CartItem[];
+  customer_phone: string;
+  shipping_amount: number;
+}
+
+export interface DiscountCodeInfo {
+  code: string;
+  name: string;
+  description: string | null;
+  type: 'percentage' | 'fixed_amount';
+  value: string;
+  minimum_order_amount: string;
+  maximum_discount_amount: string;
+  expires_at: string | null;
+  usage_count: number;
+  usage_limit: number;
+  remaining_usage: number;
+}
+
+export interface OrderSummary {
+  subtotal_amount: number;
+  discount_amount: number;
+  shipping_amount: number;
+  total_amount: number;
+  currency: string;
+  free_shipping: boolean;
+}
+
+export interface ValidateDiscountCodeItem {
+  product: Product;
+  quantity: number;
+  item_total: number;
+  price_used: number;
+}
+
+export interface ValidateDiscountCodeResponse {
+  discount_code: DiscountCodeInfo;
+  order_summary: OrderSummary;
+  items: ValidateDiscountCodeItem[];
+}
+
 export interface ShippingAddress {
   street: string;
   city: string;
   governorate: string;
-  postal_code: string;
+  postal_code?: string; // Optional
 }
 
 export interface CreateOrderRequest {
   customer_name: string;
   customer_phone: string;
-  customer_email: string;
+  customer_email: string; // Will default to guest@soapy.com if not provided
   shipping_address: ShippingAddress;
   items: CartItem[];
   discount_code?: string;
@@ -146,5 +189,94 @@ export interface PaymentStatusResponse {
 
 export interface ShippingCostResponse {
   shipping_cost: string;
+}
+
+// Order Tracking Types
+export interface OrderTrackingTimelineItem {
+  status: string;
+  title: string;
+  description: string;
+  date: string;
+  completed: boolean;
+}
+
+export interface OrderTrackingStatusInfo {
+  title: string;
+  description: string;
+  color: string;
+  icon: string;
+}
+
+export interface OrderTrackingOrderItem {
+  id: number;
+  product_id: number;
+  product_price: string;
+  quantity: number;
+  subtotal: number;
+  product_snapshot?: {
+    title: string;
+    slug: string;
+    price: string;
+    currency: string;
+    description?: string;
+    images?: string[];
+    category?: string;
+    meta?: any;
+    has_discount?: boolean;
+    discounted_price?: number;
+    short_description?: string | null;
+    discount_percentage?: number | null;
+  };
+  product?: Product;
+}
+
+export interface OrderTrackingPayment {
+  id: number;
+  order_id: number;
+  provider: string;
+  payment_method: string;
+  invoice_reference: string;
+  payment_id: string | null;
+  amount: string;
+  currency: string;
+  status: string;
+  response_raw?: any;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrderTrackingOrder {
+  id: number;
+  customer_id: number;
+  order_number: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email: string;
+  shipping_address: ShippingAddress;
+  total_amount: string;
+  currency: string;
+  status: string;
+  tracking_number: string;
+  shipping_date: string | null;
+  delivery_date: string | null;
+  payment_id: number | null;
+  notes: string | null;
+  discount_code: string | null;
+  discount_amount: string;
+  subtotal_amount: string;
+  shipping_amount: string;
+  free_shipping: boolean;
+  admin_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  payment?: OrderTrackingPayment;
+  customer?: any;
+  order_items: OrderTrackingOrderItem[];
+}
+
+export interface OrderTrackingResponse {
+  order: OrderTrackingOrder;
+  timeline: OrderTrackingTimelineItem[];
+  status_info: OrderTrackingStatusInfo;
 }
 

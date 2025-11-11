@@ -27,6 +27,9 @@ export class MessageHandler {
       // Add user message to conversation
       conversationManager.addMessage(phone, 'user', userMessage);
 
+      // Send typing indicator
+      await whatsappBot.sendTypingIndicator(phone);
+
       // Get conversation history
       const conversationHistory = conversationManager.getFullConversationHistory(phone);
 
@@ -37,6 +40,9 @@ export class MessageHandler {
           conversationHistory,
           phone
         );
+
+        // Clear typing indicator before sending message
+        await whatsappBot.clearTypingIndicator(phone);
 
         // Send response to user
         await whatsappBot.sendMessage(phone, response.text);
@@ -52,6 +58,9 @@ export class MessageHandler {
         }
       } catch (error: any) {
         logger.error('Error generating response:', error);
+        
+        // Clear typing indicator in case of error
+        await whatsappBot.clearTypingIndicator(phone);
         
         // Send error message to user
         const errorMessage = 'عذراً، حدث خطأ في معالجة رسالتك. يرجى المحاولة مرة أخرى.';

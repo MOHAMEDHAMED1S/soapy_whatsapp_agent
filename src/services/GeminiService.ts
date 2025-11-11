@@ -96,30 +96,83 @@ export class GeminiService {
 ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
 
 المعلومات المطلوبة لإنشاء طلب:
-- اسم العميل
+- اسم العميل (إجباري)
 - رقم الهاتف (سيتم الحصول عليه تلقائياً من رقم WhatsApp)
-- البريد الإلكتروني
-- العنوان: الشارع، المدينة، المحافظة، الرمز البريدي
-- المنتجات والكميات
+- البريد الإلكتروني (يجب أن تسأل عنه، لكنه اختياري - إذا لم يقدمه العميل أو رفض، يمكنك المتابعة)
+- العنوان: الشارع، المحافظة، المدينة (لا حاجة للرمز البريدي)
+- المنتجات والكميات (إجباري)
+- كود الخصم (اختياري - إذا أراد العميل تطبيق كود خصم، اسأله عنه وطبق التحقق)
+
+الدوال المتاحة:
+- search_products: البحث عن المنتجات
+- get_product_details: الحصول على تفاصيل منتج
+- get_featured_products: الحصول على المنتجات المميزة
+- calculate_order_total: حساب إجمالي الطلب
+- get_shipping_cost: جلب رسوم التوصيل (استخدمها عندما يسأل العميل عن تكلفة الشحن أو رسوم التوصيل)
+- validate_discount_code: التحقق من صحة كود الخصم (استخدمها عندما يريد العميل تطبيق كود خصم)
+- create_order: إنشاء طلب جديد
+- track_order: متابعة حالة الطلب باستخدام رقم الطلب
+- get_payment_methods: جلب طرق الدفع المتاحة
+- initiate_payment: تهيئة الدفع
 
 تعليمات مهمة جداً:
 1. أنت تستخدم Function Calling - استدعي الدوال مباشرة، لا تكتب أي كود
 2. عندما تجمع جميع معلومات الطلب، استخدم دالة create_order مباشرة
-3. ممنوع كتابة أي كود Python أو JavaScript أو أي لغة برمجة
-4. ممنوع استخدام علامات خاصة أو رموز برمجية
-5. فقط استدعي الدالة create_order عندما تكون جميع المعلومات جاهزة
-6. بعد استدعاء create_order، ستحصل على رابط الدفع ورقم الطلب تلقائياً
+3. عندما يطلب العميل متابعة طلبه أو معرفة حالة الطلب، استخدم دالة track_order مع رقم الطلب
+4. ممنوع كتابة أي كود Python أو JavaScript أو أي لغة برمجة
+5. ممنوع استخدام علامات خاصة أو رموز برمجية
+6. فقط استدعي الدالة create_order عندما تكون جميع المعلومات جاهزة
+7. بعد استدعاء create_order، ستحصل على رابط الدفع ورقم الطلب تلقائياً
+8. احفظ رقم الطلب وأخبر العميل به حتى يمكنه متابعة طلبه لاحقاً
 
-تنسيق الرسائل:
-- لا تستخدم Markdown مثل ** أو ## أو []()
-- لا تستخدم تنسيق نصي معقد
-- استخدم نص عادي فقط مع رموز تعبيرية بسيطة
-- الروابط ترسل كنص عادي، لا تستخدم []()
-- استخدم * للتركيز فقط (لا تستخدم **)
+ملاحظات مهمة عن جمع معلومات الطلب:
+- البريد الإلكتروني: يجب أن تسأل العميل عن بريده الإلكتروني(مهم)، ولكن وضح له بشكل صريح أن البريد الإلكتروني اختياري وأنه يمكنه تخطيه إذا لم يرد تقديمه. إذا رفض العميل أو لم يقدم بريداً، يمكنك المتابعة في إنشاء الطلب. استخدم عبارات مثل: "هل لديك بريد إلكتروني؟ (اختياري)" أو "يمكنك تقديم بريدك الإلكتروني إذا رغبت (اختياري)".
+- العنوان: تحتاج فقط للشارع، المحافظة، والمدينة. لا حاجة للرمز البريدي.
+- عند طلب البريد الإلكتروني، تأكد من أنك تذكر أنه اختياري بشكل واضح للعميل.
+- كود الخصم: إذا أراد العميل تطبيق كود خصم، اسأله عن الكود واستخدم دالة validate_discount_code للتحقق منه قبل إنشاء الطلب. إذا كان الكود صالحاً، أضفه إلى create_order. إذا كان الكود غير صالح، أخبر العميل واطلب كوداً آخر أو تابع بدون كود خصم.
+
+تنسيق الرسائل لـ WhatsApp (مهم جداً):
+WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع الرسائل بتنسيق نصي عادي مناسب لـ WhatsApp:
+
+ما هو مسموح في WhatsApp:
+- النص العادي
+- السطور الجديدة (\n)
+- رموز تعبيرية بسيطة (📦 💰 ✅ ❌)
+- الرموز النصية البسيطة (- للقوائم)
+- الرموز الخاصة (*) للتركيز (لكن استخدمها بحذر)
+- الروابط كنص عادي (يرسلها WhatsApp تلقائياً كروابط قابلة للنقر)
+
+ما هو غير مسموح في WhatsApp:
+- Markdown مثل **text** (لا يعمل، استخدم *text* فقط)
+- Markdown headers مثل ## أو ### (لا يعمل)
+- Markdown links مثل [text](url) (لا يعمل، استخدم الرابط مباشرة)
+- Code blocks (ثلاثة backticks) (لا يعمل)
+- Inline code (backtick واحد) (لا يعمل)
+- جداول Markdown (لا يعمل)
+
+مثال على التنسيق الصحيح:
+خطأ: **منتج رائع** [اضغط هنا](https://example.com)
+صحيح: *منتج رائع* https://example.com
+
+خطأ: ## قائمة المنتجات
+صحيح: قائمة المنتجات:
+
+خطأ: كود بين backticks
+صحيح: كود
+
+قواعد مهمة:
+1. استخدم نصاً عادياً فقط
+2. الروابط ترسلها مباشرة كنص (مثل: https://example.com)
+3. للتركيز، استخدم * فقط مرة واحدة (*نص*) وليس **
+4. لا تستخدم ## أو ### أو أي رموز Markdown
+5. استخدم - للقوائم بدلاً من *
+6. استخدم رموز تعبيرية بسيطة فقط
+7. لا تستخدم code blocks أو inline code
 
 كن ودوداً ومهنياً ومفيداً دائماً.
 أجب بالعربية فقط ولا تستخدم أي لغة أخرى.
-لا تكتب أي كود. فقط استخدم Function Calling للدوال المتاحة.`;
+لا تكتب أي كود. فقط استخدم Function Calling للدوال المتاحة.
+تذكر: جميع الرسائل يجب أن تكون بتنسيق نصي عادي مناسب لـ WhatsApp، بدون أي Markdown.`;
   }
 
   // Define functions for Gemini
@@ -187,27 +240,31 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
               type: 'number',
               description: 'تكلفة الشحن',
             },
+            discount_code: {
+              type: 'string',
+              description: 'كود الخصم (اختياري - إذا كان متوفراً)',
+            },
           },
           required: ['items', 'shipping_amount'],
         },
       },
       {
         name: 'create_order',
-        description: 'استخدم هذه الدالة لإنشاء طلب جديد عندما تجمع جميع المعلومات المطلوبة من العميل. لا تكتب أي كود Python أو JavaScript. فقط استدعي هذه الدالة مباشرة من خلال Function Calling. رقم الهاتف سيتم إضافته تلقائياً من رقم WhatsApp للعميل.',
+        description: 'استخدم هذه الدالة لإنشاء طلب جديد عندما تجمع جميع المعلومات المطلوبة من العميل. لا تكتب أي كود Python أو JavaScript. فقط استدعي هذه الدالة مباشرة من خلال Function Calling. رقم الهاتف سيتم إضافته تلقائياً من رقم WhatsApp للعميل. يجب أن تسأل عن البريد الإلكتروني ولكن وضح أنه اختياري - إذا لم يقدمه العميل أو رفض، لا تمرره في الدالة أو مرره كقيمة فارغة.',
         parameters: {
           type: 'object',
           properties: {
             customer_name: { 
               type: 'string',
-              description: 'اسم العميل الكامل'
+              description: 'اسم العميل الكامل (إجباري)'
             },
             customer_email: { 
               type: 'string',
-              description: 'البريد الإلكتروني للعميل'
+              description: 'البريد الإلكتروني للعميل (اختياري - يجب أن تسأل عنه ولكن وضح أنه اختياري. إذا لم يقدمه العميل أو رفض، لا تمرره أو مرره كقيمة فارغة)'
             },
             shipping_address: {
               type: 'object',
-              description: 'عنوان الشحن الكامل',
+              description: 'عنوان الشحن - يحتاج فقط للشارع، المحافظة، والمدينة',
               properties: {
                 street: { 
                   type: 'string',
@@ -223,10 +280,10 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
                 },
                 postal_code: { 
                   type: 'string',
-                  description: 'الرمز البريدي'
+                  description: 'الرمز البريدي (اختياري)'
                 },
               },
-              required: ['street', 'city', 'governorate', 'postal_code'],
+              required: ['street', 'city', 'governorate'],
             },
             items: {
               type: 'array',
@@ -246,13 +303,57 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
                 required: ['product_id', 'quantity'],
               },
             },
+            discount_code: {
+              type: 'string',
+              description: 'كود الخصم (اختياري - يجب التحقق منه باستخدام validate_discount_code قبل إضافته. إذا تم التحقق من الكود وكان صالحاً، أضفه هنا)'
+            },
           },
           required: [
             'customer_name',
-            'customer_email',
             'shipping_address',
             'items',
           ],
+        },
+      },
+      {
+        name: 'validate_discount_code',
+        description: 'التحقق من صحة كود الخصم. استخدم هذه الدالة عندما يريد العميل تطبيق كود خصم. يجب أن تكون لديك قائمة المنتجات والكميات قبل التحقق من الكود. بعد التحقق، إذا كان الكود صالحاً، يمكنك إضافته إلى create_order.',
+        parameters: {
+          type: 'object',
+          properties: {
+            discount_code: {
+              type: 'string',
+              description: 'كود الخصم الذي يريد العميل تطبيقه'
+            },
+            items: {
+              type: 'array',
+              description: 'قائمة المنتجات مع الكميات (مطلوبة للتحقق من الكود)',
+              items: {
+                type: 'object',
+                properties: {
+                  product_id: { 
+                    type: 'number',
+                    description: 'معرف المنتج (رقم)'
+                  },
+                  quantity: { 
+                    type: 'number',
+                    description: 'الكمية المطلوبة (رقم)'
+                  },
+                },
+                required: ['product_id', 'quantity'],
+              },
+            },
+          },
+          required: ['discount_code', 'items'],
+        },
+      },
+      {
+        name: 'get_shipping_cost',
+        description: 'جلب رسوم التوصيل. استخدم هذه الدالة عندما يسأل العميل عن تكلفة الشحن أو رسوم التوصيل أو مصاريف التوصيل.',
+        parameters: {
+          type: 'object',
+          properties: {},
+          required: [],
         },
       },
       {
@@ -276,24 +377,21 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
           required: ['order_id', 'payment_method'],
         },
       },
+      {
+        name: 'track_order',
+        description: 'متابعة حالة الطلب باستخدام رقم الطلب. استخدم هذه الدالة عندما يطلب العميل متابعة طلبه أو معرفة حالة الطلب.',
+        parameters: {
+          type: 'object',
+          properties: {
+            order_number: {
+              type: 'string',
+              description: 'رقم الطلب الذي يريد العميل متابعته',
+            },
+          },
+          required: ['order_number'],
+        },
+      },
     ];
-  }
-
-  // Clean markdown formatting from text (WhatsApp doesn't support it well)
-  private cleanMarkdown(text: string): string {
-    if (!text) return text;
-    
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '*$1*') // Replace **text** with *text* (single asterisk works in WhatsApp)
-      .replace(/##+\s*/g, '') // Remove ## headers
-      .replace(/###+\s*/g, '') // Remove ### headers
-      .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remove markdown links [text](url) -> text
-      .replace(/```[\s\S]*?```/g, '') // Remove code blocks
-      .replace(/`([^`]+)`/g, '$1') // Remove inline code `code` -> code
-      .replace(/\*\s+/g, '- ') // Replace * with - for lists (WhatsApp supports -)
-      .replace(/^\s*[-*]\s+/gm, '- ') // Normalize list items
-      .replace(/\n{3,}/g, '\n\n') // Remove excessive newlines
-      .trim();
   }
 
   // Execute function calls
@@ -331,12 +429,95 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
           return productService.formatProductList(products);
         }
 
+        case 'validate_discount_code': {
+          try {
+            // Get shipping cost first (needed for validation)
+            const shippingResponse = await apiService.getShippingCost();
+            const shippingAmount = parseFloat(shippingResponse.data.shipping_cost);
+
+            const validateResponse = await apiService.validateDiscountCode({
+              discount_code: args.discount_code,
+              items: args.items,
+              customer_phone: customerPhone,
+              shipping_amount: shippingAmount,
+            });
+
+            if (validateResponse.success && validateResponse.data) {
+              const { discount_code: discountInfo, order_summary } = validateResponse.data;
+              
+              // Format discount code information (plain text, no markdown)
+              let responseMessage = `كود الخصم "${args.discount_code}" صالح!\n\n`;
+              
+              // Discount code details
+              responseMessage += `تفاصيل كود الخصم:\n`;
+              responseMessage += `نوع الخصم: ${discountInfo.type === 'percentage' ? 'نسبة مئوية' : 'مبلغ ثابت'}\n`;
+              responseMessage += `قيمة الخصم: ${discountInfo.value}${discountInfo.type === 'percentage' ? '%' : ' د.ك'}\n`;
+              
+              if (discountInfo.minimum_order_amount && parseFloat(discountInfo.minimum_order_amount) > 0) {
+                responseMessage += `الحد الأدنى للطلب: ${discountInfo.minimum_order_amount} ${order_summary.currency}\n`;
+              }
+              
+              if (discountInfo.maximum_discount_amount && parseFloat(discountInfo.maximum_discount_amount) > 0) {
+                responseMessage += `الحد الأقصى للخصم: ${discountInfo.maximum_discount_amount} ${order_summary.currency}\n`;
+              }
+              
+              if (discountInfo.remaining_usage !== undefined && discountInfo.remaining_usage >= 0) {
+                responseMessage += `عدد الاستخدامات المتبقية: ${discountInfo.remaining_usage}\n`;
+              }
+              
+              if (discountInfo.expires_at) {
+                const expireDate = new Date(discountInfo.expires_at);
+                const formattedDate = expireDate.toLocaleDateString('ar-KW', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                });
+                responseMessage += `تاريخ الانتهاء: ${formattedDate}\n`;
+              }
+              
+              // Order summary with discount applied
+              responseMessage += `\nملخص الطلب مع الخصم:\n`;
+              responseMessage += `المجموع الفرعي: ${order_summary.subtotal_amount} ${order_summary.currency}\n`;
+              responseMessage += `مبلغ الخصم: ${order_summary.discount_amount} ${order_summary.currency}\n`;
+              responseMessage += `تكلفة الشحن: ${order_summary.shipping_amount} ${order_summary.currency}\n`;
+              responseMessage += `المبلغ الإجمالي بعد الخصم: ${order_summary.total_amount} ${order_summary.currency}\n\n`;
+              
+              responseMessage += `سيتم تطبيق هذا الخصم على طلبك عند إنشاء الطلب.`;
+              
+              return responseMessage;
+            }
+
+            // Handle error response
+            const errorMsg = validateResponse.message || 'كود الخصم غير صالح';
+            return `كود الخصم "${args.discount_code}" غير صالح.\n${errorMsg}\n\nيرجى التحقق من الكود والمحاولة مرة أخرى.`;
+          } catch (error: any) {
+            logger.error('Error validating discount code:', error);
+            const errorMessage = error.response?.data?.message || error.message || 'حدث خطأ في التحقق من كود الخصم';
+            return `حدث خطأ في التحقق من كود الخصم: ${errorMessage}\n\nيرجى المحاولة مرة أخرى.`;
+          }
+        }
+
+        case 'get_shipping_cost': {
+          try {
+            const shippingResponse = await apiService.getShippingCost();
+            if (shippingResponse.success) {
+              const shippingCost = shippingResponse.data.shipping_cost;
+              return `رسوم التوصيل: ${shippingCost} د.ك\n\nهذه هي رسوم التوصيل القياسية لجميع الطلبات.`;
+            }
+            return 'حدث خطأ في جلب رسوم التوصيل. يرجى المحاولة مرة أخرى.';
+          } catch (error: any) {
+            logger.error('Error getting shipping cost:', error);
+            return 'حدث خطأ في جلب رسوم التوصيل. يرجى المحاولة مرة أخرى.';
+          }
+        }
+
         case 'calculate_order_total': {
           const shippingResponse = await apiService.getShippingCost();
           const shippingAmount = parseFloat(shippingResponse.data.shipping_cost);
           
           const totalResponse = await apiService.calculateTotal({
             items: args.items,
+            discount_code: args.discount_code, // Include discount code if provided
             shipping_amount: shippingAmount,
           });
 
@@ -359,12 +540,52 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
           const shippingResponse = await apiService.getShippingCost();
           const shippingAmount = parseFloat(shippingResponse.data.shipping_cost);
 
+          // Use provided email or default to guest@soapy.com
+          const customerEmail = args.customer_email || 'guest@soapy.com';
+          
+          // Ensure shipping_address has all required fields (postal_code is optional)
+          const shippingAddress = {
+            street: args.shipping_address.street,
+            city: args.shipping_address.city,
+            governorate: args.shipping_address.governorate,
+            postal_code: args.shipping_address.postal_code || '', // Optional, use empty string if not provided
+          };
+
+          // Validate discount code if provided
+          let discountCode: string | undefined = undefined;
+          if (args.discount_code) {
+            try {
+              const validateResponse = await apiService.validateDiscountCode({
+                discount_code: args.discount_code,
+                items: args.items,
+                customer_phone: customerPhone,
+                shipping_amount: shippingAmount,
+              });
+
+              if (validateResponse.success && validateResponse.data) {
+                // API returns success=true when code is valid, data contains discount_code and order_summary
+                discountCode = args.discount_code;
+                const discountAmount = validateResponse.data.order_summary.discount_amount;
+                logger.info(`Discount code validated: ${args.discount_code}, discount amount: ${discountAmount}`);
+              } else {
+                // If success is false, the code is invalid
+                const errorMsg = validateResponse.message || 'كود الخصم غير صالح';
+                return `كود الخصم "${args.discount_code}" غير صالح.\n${errorMsg}\n\nيرجى التحقق من الكود والمحاولة مرة أخرى، أو يمكنك المتابعة بدون كود خصم.`;
+              }
+            } catch (error: any) {
+              logger.error('Error validating discount code:', error);
+              const errorMsg = error.response?.data?.message || error.message || 'حدث خطأ في التحقق من كود الخصم';
+              return `حدث خطأ في التحقق من كود الخصم: ${errorMsg}\n\nيرجى المحاولة مرة أخرى أو المتابعة بدون كود خصم.`;
+            }
+          }
+
           const orderResponse = await apiService.createOrder({
             customer_name: args.customer_name,
             customer_phone: customerPhone, // Use WhatsApp phone number
-            customer_email: args.customer_email,
-            shipping_address: args.shipping_address,
+            customer_email: customerEmail,
+            shipping_address: shippingAddress,
             items: args.items,
+            discount_code: discountCode, // Include discount code if validated
             shipping_amount: shippingAmount,
           });
 
@@ -408,31 +629,40 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
                   const trackingNumber = orderData.tracking_number || order.tracking_number;
                   const paymentUrl = paymentResponse.data.payment_url;
 
-                  // Format order items
+                  // Format order items from order.order_items array (matching API response structure)
                   let itemsText = '';
-                  if (order.order_items && order.order_items.length > 0) {
+                  if (order.order_items && Array.isArray(order.order_items) && order.order_items.length > 0) {
                     itemsText = '\n\nالمنتجات:\n';
                     order.order_items.forEach((item: any, index: number) => {
-                      const productTitle = item.product?.title || item.product_snapshot?.title || `منتج ${item.product_id}`;
-                      const quantity = item.quantity;
-                      const price = item.product_price || item.product?.price || '0';
-                      itemsText += `${index + 1}. ${productTitle} - الكمية: ${quantity} - السعر: ${price} ${currency}\n`;
+                      // Try multiple sources for product title (product.title, product_snapshot.title)
+                      const productTitle = item.product?.title || 
+                                         item.product_snapshot?.title || 
+                                         `منتج ${item.product_id}`;
+                      const quantity = item.quantity || 1;
+                      const itemPrice = item.product_price || 
+                                      item.product?.price || 
+                                      item.product_snapshot?.price || 
+                                      '0';
+                      itemsText += `${index + 1}. ${productTitle}\n`;
+                      itemsText += `   الكمية: ${quantity}\n`;
+                      itemsText += `   السعر: ${itemPrice} ${currency}\n\n`;
                     });
                   }
 
-                  // Build message without Markdown - plain text for WhatsApp
+                  // Build message in plain text format for WhatsApp (no markdown, no special formatting)
+                  // WhatsApp doesn't support markdown well, so use plain text only
                   let message = `تم إنشاء طلبك بنجاح!\n\n`;
                   message += `رقم الطلب: ${orderNumber}\n`;
                   message += `رقم التتبع: ${trackingNumber || orderNumber}\n\n`;
                   message += `تفاصيل الطلب:\n`;
                   message += `المجموع الفرعي: ${subtotal} ${currency}\n`;
-                  if (discount > 0) {
+                  if (discount && parseFloat(String(discount)) > 0) {
                     message += `الخصم: ${discount} ${currency}\n`;
                   }
                   message += `تكلفة الشحن: ${shipping} ${currency}\n`;
                   message += `المبلغ الإجمالي: ${totalAmount} ${currency}\n`;
                   message += itemsText;
-                  message += `\nرابط الدفع:\n${paymentUrl}\n\n`;
+                  message += `رابط الدفع:\n${paymentUrl}\n\n`;
                   message += `يرجى الضغط على الرابط أعلاه لإتمام عملية الدفع.`;
 
                   return message;
@@ -501,6 +731,112 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
             return `حدث خطأ في إنشاء الطلب: ${errorMsg}\n${errorDetails}`;
           }
           return `حدث خطأ في إنشاء الطلب: ${errorMsg}`;
+        }
+
+        case 'track_order': {
+          try {
+            const orderNumber = args.order_number;
+            if (!orderNumber) {
+              return 'يرجى تقديم رقم الطلب لمتابعته.';
+            }
+
+            logger.info(`Tracking order: ${orderNumber}`);
+            const trackingResponse = await apiService.trackOrder(orderNumber);
+
+            if (trackingResponse.success && trackingResponse.data) {
+              const { order, timeline, status_info } = trackingResponse.data;
+
+              // Format order tracking information (plain text, no markdown)
+              let message = `معلومات متابعة الطلب:\n\n`;
+              message += `رقم الطلب: ${order.order_number}\n`;
+              message += `رقم التتبع: ${order.tracking_number}\n`;
+              message += `الحالة الحالية: ${status_info.title}\n`;
+              message += `${status_info.description}\n\n`;
+
+              // Add timeline
+              if (timeline && timeline.length > 0) {
+                message += `سير الطلب:\n`;
+                timeline.forEach((item: any) => {
+                  const statusIcon = item.completed ? '✓' : '○';
+                  message += `${statusIcon} ${item.title}\n`;
+                  if (item.description) {
+                    message += `   ${item.description}\n`;
+                  }
+                  if (item.date) {
+                    const date = new Date(item.date);
+                    const formattedDate = date.toLocaleDateString('ar-KW', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    message += `   التاريخ: ${formattedDate}\n`;
+                  }
+                  message += '\n';
+                });
+              }
+
+              // Add order details
+              message += `تفاصيل الطلب:\n`;
+              message += `المبلغ الإجمالي: ${order.total_amount} ${order.currency}\n`;
+              message += `المجموع الفرعي: ${order.subtotal_amount} ${order.currency}\n`;
+              message += `تكلفة الشحن: ${order.shipping_amount} ${order.currency}\n`;
+              
+              if (order.discount_amount && parseFloat(order.discount_amount) > 0) {
+                message += `الخصم: ${order.discount_amount} ${order.currency}\n`;
+              }
+
+              // Add order items
+              if (order.order_items && order.order_items.length > 0) {
+                message += `\nالمنتجات:\n`;
+                order.order_items.forEach((item: any, index: number) => {
+                  const productTitle = item.product?.title || 
+                                     item.product_snapshot?.title || 
+                                     `منتج ${item.product_id}`;
+                  const quantity = item.quantity || 1;
+                  const itemPrice = item.product_price || 
+                                  item.product?.price || 
+                                  item.product_snapshot?.price || 
+                                  '0';
+                  message += `${index + 1}. ${productTitle}\n`;
+                  message += `   الكمية: ${quantity}\n`;
+                  message += `   السعر: ${itemPrice} ${order.currency}\n\n`;
+                });
+              }
+
+              // Add shipping address
+              if (order.shipping_address) {
+                message += `عنوان الشحن:\n`;
+                message += `${order.shipping_address.street}\n`;
+                message += `${order.shipping_address.city}, ${order.shipping_address.governorate}\n`;
+                if (order.shipping_address.postal_code) {
+                  message += `الرمز البريدي: ${order.shipping_address.postal_code}\n`;
+                }
+              }
+
+              // Add payment information if available
+              if (order.payment) {
+                message += `\nمعلومات الدفع:\n`;
+                message += `حالة الدفع: ${order.payment.status}\n`;
+                if (order.payment.invoice_reference) {
+                  message += `رقم الفاتورة: ${order.payment.invoice_reference}\n`;
+                }
+                // Add payment URL if available
+                if (order.payment.response_raw?.payment_url) {
+                  message += `رابط الدفع: ${order.payment.response_raw.payment_url}\n`;
+                }
+              }
+
+              return message;
+            }
+
+            return `لم أتمكن من العثور على معلومات للطلب رقم ${orderNumber}. يرجى التأكد من رقم الطلب والمحاولة مرة أخرى.`;
+          } catch (error: any) {
+            logger.error('Error tracking order:', error);
+            const errorMessage = error.message || 'حدث خطأ في متابعة الطلب';
+            return `حدث خطأ في متابعة الطلب: ${errorMessage}`;
+          }
         }
 
         case 'get_payment_methods': {
@@ -776,10 +1112,7 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
 
           // Send function responses back to the chat
           const followUpResult = await chat.sendMessage(functionResponseParts);
-          let finalText = followUpResult.response.text();
-          
-          // Clean markdown from response
-          finalText = this.cleanMarkdown(finalText);
+          const finalText = followUpResult.response.text();
 
           return {
             text: finalText,
@@ -791,15 +1124,12 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
         } catch (error: any) {
           logger.error('Error sending function response:', error);
           // If function response fails, return the function result as text
-          let functionResultText = functionResults
+          const functionResultText = functionResults
             .map((fr: any) => {
               const response = fr.functionResponse.response;
               return typeof response === 'string' ? response : JSON.stringify(response);
             })
             .join('\n\n');
-          
-          // Clean markdown from function result text
-          functionResultText = this.cleanMarkdown(functionResultText);
           
           return {
             text: functionResultText,
@@ -823,7 +1153,7 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
           responseText.includes('```python') ||
           responseText.includes('```javascript') ||
           (responseText.includes('create_order(') && responseText.includes('customer_name=') && !responseText.includes('functionResponse'))) {
-        logger.error('❌ CRITICAL ERROR: Gemini wrote code instead of using Function Calling!');
+        logger.error('CRITICAL ERROR: Gemini wrote code instead of using Function Calling!');
         logger.error('Response contains code. First 500 chars:', responseText.substring(0, 500));
         logger.error('This should not happen - Gemini should use Function Calling API, not write code');
         
@@ -832,9 +1162,6 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
           text: 'عذراً، حدث خطأ فني في معالجة طلبك. يرجى المحاولة مرة أخرى. إذا استمرت المشكلة، يرجى التواصل مع الدعم الفني.',
         };
       }
-      
-      // Clean markdown from response (WhatsApp doesn't support markdown well)
-      responseText = this.cleanMarkdown(responseText);
       
       return {
         text: responseText,
