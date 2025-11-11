@@ -54,11 +54,39 @@ export class DatabaseManager {
       )
     `);
 
+    // Blocked numbers table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS blocked_numbers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        phone TEXT NOT NULL UNIQUE,
+        reason TEXT,
+        blocked_by TEXT DEFAULT 'system',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Message rate tracking table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS message_rate_tracking (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        phone TEXT NOT NULL,
+        message_count INTEGER DEFAULT 1,
+        window_start DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_message_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Create indexes
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone);
       CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone);
       CREATE INDEX IF NOT EXISTS idx_orders_order_id ON orders(order_id);
+      CREATE INDEX IF NOT EXISTS idx_blocked_numbers_phone ON blocked_numbers(phone);
+      CREATE INDEX IF NOT EXISTS idx_message_rate_phone ON message_rate_tracking(phone);
+      CREATE INDEX IF NOT EXISTS idx_message_rate_window ON message_rate_tracking(window_start);
     `);
 
     logger.info('Database tables initialized');

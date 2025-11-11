@@ -3,8 +3,13 @@ import { logger } from '../utils/logger';
 import { conversationManager } from './ConversationManager';
 import { geminiService } from '../services/GeminiService';
 import { whatsappBot } from './WhatsAppBot';
+import { blockedNumbersService } from '../services/BlockedNumbersService';
+import { rateLimiterService } from '../services/RateLimiterService';
 
 export class MessageHandler {
+  // Queue for processing messages (one at a time per phone number)
+  private processingQueue: Map<string, Promise<void>> = new Map();
+
   // Extract phone number from WhatsApp message
   private extractPhoneNumber(from: string): string {
     // WhatsApp format: 965XXXXXXXXX@c.us
@@ -21,6 +26,65 @@ export class MessageHandler {
 
       // Ignore empty messages
       if (!userMessage) {
+        return;
+      }
+
+      // Check if number is blocked
+      if (blockedNumbersService.isBlocked(phone)) {
+        logger.warn(`Message from blocked number ${phone} - ignoring`);
+        return; // Silently ignore messages from blocked numbers
+      }
+
+      // Check rate limit
+      const rateLimitCheck = await rateLimiterService.checkRateLimit(phone);
+      if (!rateLimitCheck.allowed) {
+        logger.warn(`Rate limit exceeded for ${phone}: ${rateLimitCheck.reason}`);
+        
+        // Check if number was auto-blocked
+        if (blockedNumbersService.isBlocked(phone)) {
+          logger.info(`Number ${phone} was auto-blocked due to spam`);
+          return; // Silently ignore
+        }
+        
+        // Send rate limit message (only once to avoid spam)
+        // We'll send a warning message, but not process the request
+        await whatsappBot.sendMessage(phone, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.');
+        return;
+      }
+
+      // Check if there's already a message being processed for this phone
+      // If so, wait for it to complete before processing the new message
+      const existingPromise = this.processingQueue.get(phone);
+      if (existingPromise) {
+        logger.debug(`Message from ${phone} is queued - waiting for previous message to complete`);
+        try {
+          await existingPromise;
+        } catch (error) {
+          logger.error(`Error waiting for previous message from ${phone}:`, error);
+        }
+      }
+
+      // Process message (one at a time per phone number)
+      const processPromise = this.processMessage(phone, userMessage);
+      this.processingQueue.set(phone, processPromise);
+
+      try {
+        await processPromise;
+      } finally {
+        // Remove from queue when done
+        this.processingQueue.delete(phone);
+      }
+    } catch (error) {
+      logger.error('Error handling message:', error);
+    }
+  }
+
+  // Process a single message
+  private async processMessage(phone: string, userMessage: string): Promise<void> {
+    try {
+      // Double-check block status (in case it was blocked while in queue)
+      if (blockedNumbersService.isBlocked(phone)) {
+        logger.warn(`Message from blocked number ${phone} - ignoring (checked during processing)`);
         return;
       }
 
@@ -62,13 +126,15 @@ export class MessageHandler {
         // Clear typing indicator in case of error
         await whatsappBot.clearTypingIndicator(phone);
         
-        // Send error message to user
-        const errorMessage = 'عذراً، حدث خطأ في معالجة رسالتك. يرجى المحاولة مرة أخرى.';
-        await whatsappBot.sendMessage(phone, errorMessage);
-        conversationManager.addMessage(phone, 'assistant', errorMessage);
+        // Send error message to user (only if not blocked)
+        if (!blockedNumbersService.isBlocked(phone)) {
+          const errorMessage = 'عذراً، حدث خطأ في معالجة رسالتك. يرجى المحاولة مرة أخرى.';
+          await whatsappBot.sendMessage(phone, errorMessage);
+          conversationManager.addMessage(phone, 'assistant', errorMessage);
+        }
       }
     } catch (error) {
-      logger.error('Error handling message:', error);
+      logger.error('Error processing message:', error);
     }
   }
 

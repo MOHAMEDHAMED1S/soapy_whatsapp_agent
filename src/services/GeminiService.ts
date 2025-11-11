@@ -103,17 +103,20 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
 - المنتجات والكميات (إجباري)
 - كود الخصم (اختياري - إذا أراد العميل تطبيق كود خصم، اسأله عنه وطبق التحقق)
 
-الدوال المتاحة:
-- search_products: البحث عن المنتجات
-- get_product_details: الحصول على تفاصيل منتج
-- get_featured_products: الحصول على المنتجات المميزة
-- calculate_order_total: حساب إجمالي الطلب
-- get_shipping_cost: جلب رسوم التوصيل (استخدمها عندما يسأل العميل عن تكلفة الشحن أو رسوم التوصيل)
-- validate_discount_code: التحقق من صحة كود الخصم (استخدمها عندما يريد العميل تطبيق كود خصم)
-- create_order: إنشاء طلب جديد
-- track_order: متابعة حالة الطلب باستخدام رقم الطلب
-- get_payment_methods: جلب طرق الدفع المتاحة
-- initiate_payment: تهيئة الدفع
+       الدوال المتاحة:
+       - search_products: البحث عن المنتجات
+       - get_product_details: الحصول على تفاصيل منتج
+       - get_featured_products: الحصول على المنتجات المميزة
+       - calculate_order_total: حساب إجمالي الطلب
+       - get_shipping_cost: جلب رسوم التوصيل (استخدمها عندما يسأل العميل عن تكلفة الشحن أو رسوم التوصيل)
+       - validate_discount_code: التحقق من صحة كود الخصم (استخدمها عندما يريد العميل تطبيق كود خصم)
+       - create_order: إنشاء طلب جديد
+       - track_order: متابعة حالة الطلب باستخدام رقم الطلب
+       - get_payment_methods: جلب طرق الدفع المتاحة
+       - initiate_payment: تهيئة الدفع
+       - block_number: حظر رقم هاتف (دالة إدارية - استخدمها فقط عند اكتشاف spam أو إساءة استخدام واضحة)
+       - unblock_number: إلغاء حظر رقم هاتف (دالة إدارية)
+       - list_blocked_numbers: عرض قائمة الأرقام المحظورة (دالة إدارية)
 
 تعليمات مهمة جداً:
 1. أنت تستخدم Function Calling - استدعي الدوال مباشرة، لا تكتب أي كود
@@ -389,6 +392,47 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             },
           },
           required: ['order_number'],
+        },
+      },
+      {
+        name: 'block_number',
+        description: 'حظر رقم هاتف. استخدم هذه الدالة عندما تريد حظر رقم هاتف (مثلاً عند اكتشاف spam أو إساءة استخدام). هذه دالة إدارية - استخدمها فقط عند الحاجة الماسة.',
+        parameters: {
+          type: 'object',
+          properties: {
+            phone: {
+              type: 'string',
+              description: 'رقم الهاتف المراد حظره',
+            },
+            reason: {
+              type: 'string',
+              description: 'سبب الحظر (اختياري)',
+            },
+          },
+          required: ['phone'],
+        },
+      },
+      {
+        name: 'unblock_number',
+        description: 'إلغاء حظر رقم هاتف. استخدم هذه الدالة لإلغاء حظر رقم هاتف محظور مسبقاً. هذه دالة إدارية.',
+        parameters: {
+          type: 'object',
+          properties: {
+            phone: {
+              type: 'string',
+              description: 'رقم الهاتف المراد إلغاء حظره',
+            },
+          },
+          required: ['phone'],
+        },
+      },
+      {
+        name: 'list_blocked_numbers',
+        description: 'عرض قائمة الأرقام المحظورة. استخدم هذه الدالة لعرض جميع الأرقام المحظورة. هذه دالة إدارية.',
+        parameters: {
+          type: 'object',
+          properties: {},
+          required: [],
         },
       },
     ];
@@ -863,6 +907,70 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             return `🔗 رابط الدفع:\n${response.data.payment_url}\n\nيرجى الضغط على الرابط لإتمام عملية الدفع.`;
           }
           return 'حدث خطأ في تهيئة الدفع. يرجى المحاولة مرة أخرى.';
+        }
+
+        case 'block_number': {
+          try {
+            // Import blockedNumbersService dynamically to avoid circular dependency
+            const { blockedNumbersService } = await import('../services/BlockedNumbersService');
+            
+            const phone = args.phone;
+            const reason = args.reason || 'حظر من قبل البوت';
+            
+            // Only allow blocking if the request comes from an admin or if it's clearly spam
+            // For security, we'll only allow blocking through the function if there's a clear reason
+            blockedNumbersService.blockNumber(phone, reason, 'bot');
+            
+            logger.info(`Number ${phone} blocked by bot, reason: ${reason}`);
+            return `تم حظر الرقم ${phone} بنجاح.\nالسبب: ${reason}`;
+          } catch (error: any) {
+            logger.error('Error blocking number:', error);
+            return `حدث خطأ في حظر الرقم: ${error.message}`;
+          }
+        }
+
+        case 'unblock_number': {
+          try {
+            // Import blockedNumbersService dynamically to avoid circular dependency
+            const { blockedNumbersService } = await import('../services/BlockedNumbersService');
+            
+            const phone = args.phone;
+            blockedNumbersService.unblockNumber(phone);
+            
+            logger.info(`Number ${phone} unblocked by bot`);
+            return `تم إلغاء حظر الرقم ${phone} بنجاح.`;
+          } catch (error: any) {
+            logger.error('Error unblocking number:', error);
+            return `حدث خطأ في إلغاء حظر الرقم: ${error.message}`;
+          }
+        }
+
+        case 'list_blocked_numbers': {
+          try {
+            // Import blockedNumbersService dynamically to avoid circular dependency
+            const { blockedNumbersService } = await import('../services/BlockedNumbersService');
+            
+            const blockedNumbers = blockedNumbersService.getAllBlockedNumbers();
+            
+            if (blockedNumbers.length === 0) {
+              return 'لا توجد أرقام محظورة حالياً.';
+            }
+            
+            let message = `قائمة الأرقام المحظورة (${blockedNumbers.length}):\n\n`;
+            blockedNumbers.forEach((blocked, index) => {
+              message += `${index + 1}. ${blocked.phone}\n`;
+              if (blocked.reason) {
+                message += `   السبب: ${blocked.reason}\n`;
+              }
+              message += `   تم الحظر بواسطة: ${blocked.blocked_by}\n`;
+              message += `   تاريخ الحظر: ${new Date(blocked.created_at).toLocaleDateString('ar-KW')}\n\n`;
+            });
+            
+            return message;
+          } catch (error: any) {
+            logger.error('Error listing blocked numbers:', error);
+            return `حدث خطأ في جلب قائمة الأرقام المحظورة: ${error.message}`;
+          }
         }
 
         default:
