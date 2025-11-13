@@ -79,6 +79,17 @@ export class DatabaseManager {
       )
     `);
 
+    // Admin prompts table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS admin_prompts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        prompt_text TEXT NOT NULL,
+        added_by TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Create indexes
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone);

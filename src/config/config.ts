@@ -18,6 +18,11 @@ export const config = {
   customer: {
     ip: process.env.CUSTOMER_IP || '0.0.0.0',
   },
+  admin: {
+    // Admin phone numbers (comma-separated)
+    // Format: 965XXXXXXXXX (without country code prefix like +)
+    phones: (process.env.ADMIN_PHONES || '').split(',').map(p => p.trim()).filter(p => p.length > 0),
+  },
 };
 
 // Validate required config

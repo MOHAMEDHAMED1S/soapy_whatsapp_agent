@@ -61,11 +61,16 @@ export interface CalculateTotalRequest {
 }
 
 export interface OrderTotal {
-  subtotal: number;
+  subtotal?: number;           // Optional for backward compatibility
+  subtotal_amount?: number;    // API returns this
   shipping_amount: number;
   discount_amount: number;
-  total: number;
+  total?: number;              // Optional for backward compatibility
+  total_amount?: number;       // API returns this
   currency: string;
+  items?: any[];               // Optional: items with product details
+  discount_code?: string | null;
+  free_shipping?: boolean;
 }
 
 export interface ValidateDiscountCodeRequest {

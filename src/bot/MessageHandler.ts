@@ -96,13 +96,18 @@ export class MessageHandler {
 
       // Get conversation history
       const conversationHistory = conversationManager.getFullConversationHistory(phone);
+      
+      // Get current order data from conversation
+      const conversation = conversationManager.getConversationContext(phone);
+      const currentOrderData = conversation?.orderData || null;
 
       // Generate response using Gemini
       try {
         const response = await geminiService.generateResponseWithFunctions(
           userMessage,
           conversationHistory,
-          phone
+          phone,
+          currentOrderData
         );
 
         // Clear typing indicator before sending message

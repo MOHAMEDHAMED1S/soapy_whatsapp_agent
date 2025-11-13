@@ -223,14 +223,97 @@ export class ApiService {
   // Calculate order total
   async calculateTotal(request: CalculateTotalRequest): Promise<ApiResponse<OrderTotal>> {
     try {
+      logger.debug('Calculate total request:', JSON.stringify(request, null, 2));
       const response = await this.client.post<ApiResponse<OrderTotal>>(
         '/checkout/calculate-total',
         request
       );
-      return response.data;
+      
+      logger.debug('Calculate total raw response:', {
+        status: response.status,
+        data: response.data,
+        dataType: typeof response.data,
+        keys: response.data ? Object.keys(response.data) : [],
+      });
+      
+      // Validate response structure
+      if (!response.data) {
+        logger.error('API returned empty response data');
+        return {
+          success: false,
+          message: 'API returned empty response',
+          data: {} as OrderTotal,
+        };
+      }
+      
+      // Handle different response structures
+      const responseData = response.data as any;
+      
+      // Case 1: Standard ApiResponse format { success, data, message }
+      if (responseData.success !== undefined) {
+        // If data field exists, use it
+        if (responseData.data) {
+          return responseData as ApiResponse<OrderTotal>;
+        }
+        
+        // If data field doesn't exist but response has OrderTotal fields directly
+        // Check if response.data itself is OrderTotal (flat structure)
+        if (responseData.subtotal !== undefined || responseData.total !== undefined) {
+          logger.info('API returned flat OrderTotal structure, wrapping in ApiResponse');
+          return {
+            success: true,
+            data: responseData as OrderTotal,
+            message: responseData.message || 'Order total calculated successfully',
+          };
+        }
+        
+        // If success is true but no data, log error
+        if (responseData.success && !responseData.data) {
+          logger.error('API returned success but no data field:', JSON.stringify(responseData, null, 2));
+          return {
+            success: false,
+            message: responseData.message || 'API returned success but no data',
+            data: {} as OrderTotal,
+          };
+        }
+      }
+      
+      // Case 2: Direct OrderTotal structure (no wrapper)
+      if (responseData.subtotal !== undefined || responseData.total !== undefined) {
+        logger.info('API returned direct OrderTotal structure, wrapping in ApiResponse');
+        return {
+          success: true,
+          data: responseData as OrderTotal,
+          message: 'Order total calculated successfully',
+        };
+      }
+      
+      // Unknown structure
+      logger.error('Unknown API response structure:', JSON.stringify(responseData, null, 2));
+      return {
+        success: false,
+        message: 'Unknown API response structure',
+        data: {} as OrderTotal,
+      };
     } catch (error: any) {
-      logger.error('Error calculating total:', error);
-      throw new Error(`Failed to calculate total: ${error.message}`);
+      logger.error('Error calculating total:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+      
+      // If API returns error response with data, return it
+      if (error.response?.data) {
+        return error.response.data;
+      }
+      
+      // Otherwise, return error response format
+      return {
+        success: false,
+        message: error.response?.data?.message || error.message || 'Failed to calculate total',
+        errors: error.response?.data?.errors,
+        data: {} as OrderTotal,
+      };
     }
   }
 

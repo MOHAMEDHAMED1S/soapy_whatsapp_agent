@@ -45,7 +45,13 @@ API_BASE_URL=https://api.soapy-bubbles.com/api/v1
 DATABASE_PATH=./data/conversations.db
 LOG_LEVEL=info
 CUSTOMER_IP=0.0.0.0
+ADMIN_PHONES=965XXXXXXXXX,965YYYYYYYYY
 ```
+
+**ملاحظة عن ADMIN_PHONES**:
+- أضف أرقام الهواتف للمالكين الإداريين (مفصولة بفواصل)
+- الصيغة: `965XXXXXXXXX` (بدون + أو 00)
+- المالكون الإداريون فقط يمكنهم استخدام دوال الحظر (block_number, unblock_number, list_blocked_numbers)
 
 **ملاحظة**: يمكنك نسخ `.env.example` كقالب:
 
