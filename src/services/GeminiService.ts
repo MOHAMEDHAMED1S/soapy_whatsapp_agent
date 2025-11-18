@@ -30,9 +30,8 @@ export class GeminiService {
       model: 'gemini-2.5-pro',
       generationConfig: {
         temperature: 0.7,
-        topK: 40,
         topP: 0.95,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 4096,
       },
     };
 
