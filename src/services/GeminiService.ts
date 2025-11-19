@@ -1163,7 +1163,6 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             // Format order details even if payment initiation fails
             const order = orderData.order;
             const orderNumber = order.order_number || orderData.tracking_number || 'غير متوفر';
-            const trackingNumber = orderData.tracking_number || order.tracking_number || orderNumber;
             const totalAmount = orderData.total_amount || order.total_amount || '0';
             const currency = orderData.currency || order.currency || 'KWD';
             const subtotal = orderData.subtotal_amount || order.subtotal_amount || 0;
