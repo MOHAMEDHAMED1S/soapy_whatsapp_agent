@@ -205,9 +205,13 @@ export class ProductService {
       // Get product name - API uses 'title' field
       const name = product.title || product.name_ar || product.name_en || product.name || `منتج ${product.id}`;
       
-      // Get price - API returns price as string, but we also have numeric fields
-      let price: number | string = 0;
-      if (typeof product.price === 'string') {
+      const currency = product.currency || 'د.ك';
+      
+      // Get price - use discounted_price if available, otherwise use price
+      let price: number = 0;
+      if (product.has_discount && product.discounted_price !== undefined) {
+        price = product.discounted_price;
+      } else if (typeof product.price === 'string') {
         price = parseFloat(product.price) || 0;
       } else if (typeof product.price === 'number') {
         price = product.price;
@@ -216,7 +220,16 @@ export class ProductService {
       }
       
       message += `${index + 1}. ${name}\n`;
-      message += `   السعر: ${price} ${product.currency || 'د.ك'}\n`;
+      
+      // Display price with discount information if available
+      if (product.has_discount && product.price_before_discount && product.discount_percentage) {
+        const originalPrice = product.price_before_discount;
+        message += `   السعر: ${price} ${currency}`;
+        message += ` (كان ${originalPrice} ${currency})`;
+        message += ` - خصم ${product.discount_percentage}%\n`;
+      } else {
+        message += `   السعر: ${price} ${currency}\n`;
+      }
       
       // Get description - API uses 'description' field (Arabic)
       if (product.description || product.description_ar || product.description_en) {
@@ -242,9 +255,13 @@ export class ProductService {
     const name = product.title || product.name_ar || product.name_en || product.name || `منتج ${product.id}`;
     const description = product.description || product.description_ar || product.description_en || '';
     
-    // Get price - handle both string and number
-    let price: number | string = 0;
-    if (typeof product.price === 'string') {
+    const currency = product.currency || 'د.ك';
+    
+    // Get price - use discounted_price if available, otherwise use price
+    let price: number = 0;
+    if (product.has_discount && product.discounted_price !== undefined) {
+      price = product.discounted_price;
+    } else if (typeof product.price === 'string') {
       price = parseFloat(product.price) || 0;
     } else if (typeof product.price === 'number') {
       price = product.price;
@@ -252,7 +269,6 @@ export class ProductService {
       price = product.sale_price || product.discounted_price || 0;
     }
     
-    const currency = product.currency || 'د.ك';
     const originalPrice = product.has_discount && product.price_before_discount 
       ? product.price_before_discount 
       : null;
@@ -263,11 +279,10 @@ export class ProductService {
       message += `${description.substring(0, 300)}${description.length > 300 ? '...' : ''}\n\n`;
     }
 
-    if (originalPrice && product.has_discount) {
+    // Display price with discount information if available
+    if (originalPrice && product.has_discount && product.discount_percentage) {
       message += `السعر: ${price} ${currency} (كان ${originalPrice} ${currency})\n`;
-      if (product.discount_percentage) {
-        message += `خصم ${product.discount_percentage}%\n`;
-      }
+      message += `خصم ${product.discount_percentage}%\n`;
     } else {
       message += `السعر: ${price} ${currency}\n`;
     }

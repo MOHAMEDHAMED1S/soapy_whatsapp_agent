@@ -770,10 +770,34 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               
               let message = `ملخص الطلب:\n\n`;
               
-              // Show items
+              // Show items with product details from API response
               message += `المنتجات:\n`;
-              for (const item of items) {
-                message += `- منتج رقم ${item.id} × ${item.quantity}\n`;
+              if (data.items && Array.isArray(data.items)) {
+                // Use detailed items from API response if available
+                for (const item of data.items) {
+                  const productName = item.product?.title || `منتج رقم ${item.product?.id || 'غير معروف'}`;
+                  const quantity = item.quantity || 1;
+                  const itemTotal = item.item_total || 0;
+                  const priceUsed = item.price_used || 0;
+                  
+                  message += `- ${productName} × ${quantity}\n`;
+                  
+                  // Show discount information if product has discount
+                  if (item.product?.has_discount && item.product?.price_before_discount) {
+                    const originalPrice = item.product.price_before_discount;
+                    const discountPercent = item.product.discount_percentage || 0;
+                    message += `  السعر: ${priceUsed} ${currency} (كان ${originalPrice} ${currency}) - خصم ${discountPercent}%\n`;
+                  } else {
+                    message += `  السعر: ${priceUsed} ${currency}\n`;
+                  }
+                  
+                  message += `  المجموع: ${itemTotal} ${currency}\n`;
+                }
+              } else {
+                // Fallback to simple format if detailed items not available
+                for (const item of items) {
+                  message += `- منتج رقم ${item.id} × ${item.quantity}\n`;
+                }
               }
               message += `\n`;
               
