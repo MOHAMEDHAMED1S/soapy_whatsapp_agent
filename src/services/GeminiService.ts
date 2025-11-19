@@ -186,6 +186,14 @@ ${adminPromptSection}
 
 قائمة المنتجات المتاحة:
 ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
+
+ملاحظة مهمة جداً عن الأسعار:
+- السعر المعروض في قائمة المنتجات أعلاه هو السعر النهائي (بعد الخصم إن وجد)
+- إذا كان المنتج عليه خصم، السعر المعروض هو السعر المخفض وليس الأصلي
+- دائماً استخدم السعر المعروض في القائمة - هذا هو السعر الذي سيدفعه العميل
+- عند ذكر سعر منتج، استخدم السعر المخفض إذا كان المنتج عليه خصم
+- لا تذكر السعر الأصلي فقط - دائماً استخدم السعر المخفض عند وجود خصم
+
 ${currentOrderInfo}
 
 المعلومات المطلوبة لإنشاء طلب:
@@ -249,13 +257,17 @@ ${currentOrderInfo}
 - لا تكتب رسائل تأكيد طلب بدون استخدام دالة create_order أولاً
 - الطلبات يتم إنشاؤها فقط من خلال دالة create_order - لا توجد طريقة أخرى
 
-قواعد صارمة عن المنتجات:
+قواعد صارمة عن المنتجات والأسعار:
 - لا تضف منتجات إلا بطلب صريح من العميل مثل "أريد منتج X" أو "أضف منتج Y"
 - لا تضف منتجات تلقائياً بناءً على الاقتراحات - فقط المنتجات التي طلبها العميل
 - تأكد من حفظ جميع المنتجات المطلوبة في order_data
 - عند عرض المنتجات، استخدم search_products أو get_product_details
 - عندما يختار العميل منتجاً، احفظه في order_data مع الكمية
 - لا تفقد أي منتج طلبه العميل - تذكر جميع المنتجات المطلوبة
+- مهم جداً: عند ذكر سعر منتج، استخدم دائماً السعر المخفض (discounted_price) إذا كان المنتج عليه خصم
+- إذا كان المنتج عليه خصم، اذكر السعر المخفض أولاً ثم اذكر السعر الأصلي ونسبة الخصم
+- لا تذكر السعر الأصلي فقط - دائماً استخدم السعر المخفض عند وجود خصم
+- في قائمة المنتجات، السعر المعروض هو السعر النهائي (بعد الخصم إن وجد)
 4. ممنوع كتابة أي كود Python أو JavaScript أو أي لغة برمجة
 5. ممنوع استخدام علامات خاصة أو رموز برمجية
 6. فقط استدعي الدالة create_order عندما تكون جميع المعلومات جاهزة - هذه هي الطريقة الوحيدة لإنشاء الطلبات
@@ -1079,13 +1091,42 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                                          item.product_snapshot?.title || 
                                          `منتج ${item.product_id}`;
                       const quantity = item.quantity || 1;
-                      const itemPrice = item.product_price || 
-                                      item.product?.price || 
-                                      item.product_snapshot?.price || 
-                                      '0';
+                      
+                      // Get price - use discounted_price if available, otherwise use product_price
+                      let itemPrice: string | number = '0';
+                      if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
+                        itemPrice = item.product.discounted_price;
+                      } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
+                        itemPrice = item.product_snapshot.discounted_price;
+                      } else {
+                        itemPrice = item.product_price || 
+                                   item.product?.price || 
+                                   item.product_snapshot?.price || 
+                                   '0';
+                      }
+                      
+                      // Get original price and discount info if available
+                      const originalPrice = item.product?.price_before_discount || 
+                                          item.product_snapshot?.price_before_discount || 
+                                          null;
+                      const discountPercent = item.product?.discount_percentage || 
+                                            item.product_snapshot?.discount_percentage || 
+                                            null;
+                      const hasDiscount = item.product?.has_discount || 
+                                        item.product_snapshot?.has_discount || 
+                                        false;
+                      
                       itemsText += `${index + 1}. ${productTitle}\n`;
                       itemsText += `   الكمية: ${quantity}\n`;
-                      itemsText += `   السعر: ${itemPrice} ${currency}\n\n`;
+                      
+                      // Display price with discount information if available
+                      if (hasDiscount && originalPrice && discountPercent) {
+                        itemsText += `   السعر: ${itemPrice} ${currency} (كان ${originalPrice} ${currency}) - خصم ${discountPercent}%\n`;
+                      } else {
+                        itemsText += `   السعر: ${itemPrice} ${currency}\n`;
+                      }
+                      
+                      itemsText += '\n';
                     });
                   }
 
@@ -1138,19 +1179,47 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                                    item.product_snapshot?.title || 
                                    `منتج ${item.product_id}`;
                 const quantity = item.quantity || 1;
-                const itemPrice = item.product_price || 
-                                item.product?.price || 
-                                item.product_snapshot?.price || 
-                                '0';
+                
+                // Get price - use discounted_price if available, otherwise use product_price
+                let itemPrice: string | number = '0';
+                if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
+                  itemPrice = item.product.discounted_price;
+                } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
+                  itemPrice = item.product_snapshot.discounted_price;
+                } else {
+                  itemPrice = item.product_price || 
+                             item.product?.price || 
+                             item.product_snapshot?.price || 
+                             '0';
+                }
+                
+                // Get original price and discount info if available
+                const originalPrice = item.product?.price_before_discount || 
+                                    item.product_snapshot?.price_before_discount || 
+                                    null;
+                const discountPercent = item.product?.discount_percentage || 
+                                      item.product_snapshot?.discount_percentage || 
+                                      null;
+                const hasDiscount = item.product?.has_discount || 
+                                  item.product_snapshot?.has_discount || 
+                                  false;
+                
                 itemsText += `${index + 1}. ${productTitle}\n`;
                 itemsText += `   الكمية: ${quantity}\n`;
-                itemsText += `   السعر: ${itemPrice} ${currency}\n\n`;
+                
+                // Display price with discount information if available
+                if (hasDiscount && originalPrice && discountPercent) {
+                  itemsText += `   السعر: ${itemPrice} ${currency} (كان ${originalPrice} ${currency}) - خصم ${discountPercent}%\n`;
+                } else {
+                  itemsText += `   السعر: ${itemPrice} ${currency}\n`;
+                }
+                
+                itemsText += '\n';
               });
             }
 
             let message = `تم إنشاء طلبك بنجاح!\n\n`;
             message += `رقم الطلب: ${orderNumber}\n`;
-            message += `رقم التتبع: ${trackingNumber}\n\n`;
             message += `تفاصيل الطلب:\n`;
             message += `المجموع الفرعي: ${subtotal} ${currency}\n`;
             if (discount && parseFloat(String(discount)) > 0) {
@@ -1239,13 +1308,42 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                                      item.product_snapshot?.title || 
                                      `منتج ${item.product_id}`;
                   const quantity = item.quantity || 1;
-                  const itemPrice = item.product_price || 
-                                  item.product?.price || 
-                                  item.product_snapshot?.price || 
-                                  '0';
+                  
+                  // Get price - use discounted_price if available, otherwise use product_price
+                  let itemPrice: string | number = '0';
+                  if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
+                    itemPrice = item.product.discounted_price;
+                  } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
+                    itemPrice = item.product_snapshot.discounted_price;
+                  } else {
+                    itemPrice = item.product_price || 
+                               item.product?.price || 
+                               item.product_snapshot?.price || 
+                               '0';
+                  }
+                  
+                  // Get original price and discount info if available
+                  const originalPrice = item.product?.price_before_discount || 
+                                      item.product_snapshot?.price_before_discount || 
+                                      null;
+                  const discountPercent = item.product?.discount_percentage || 
+                                        item.product_snapshot?.discount_percentage || 
+                                        null;
+                  const hasDiscount = item.product?.has_discount || 
+                                    item.product_snapshot?.has_discount || 
+                                    false;
+                  
                   message += `${index + 1}. ${productTitle}\n`;
                   message += `   الكمية: ${quantity}\n`;
-                  message += `   السعر: ${itemPrice} ${order.currency}\n\n`;
+                  
+                  // Display price with discount information if available
+                  if (hasDiscount && originalPrice && discountPercent) {
+                    message += `   السعر: ${itemPrice} ${order.currency} (كان ${originalPrice} ${order.currency}) - خصم ${discountPercent}%\n`;
+                  } else {
+                    message += `   السعر: ${itemPrice} ${order.currency}\n`;
+                  }
+                  
+                  message += '\n';
                 });
               }
 
