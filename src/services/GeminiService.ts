@@ -19,6 +19,8 @@ export class GeminiService {
   private genAI: GoogleGenerativeAI;
   private productCatalog: string = '';
   private systemPrompt: string = '';
+  private updateInterval: NodeJS.Timeout | null = null;
+  private readonly UPDATE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
   constructor() {
     this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
@@ -46,21 +48,36 @@ export class GeminiService {
   // Update product catalog for system prompt
   async updateProductCatalog(): Promise<void> {
     try {
-      const products = await productService.getAllProducts();
+      logger.info('Updating product catalog...');
+      const products = await productService.getAllProducts(true); // Force refresh
       if (products.length > 0) {
         const catalogText = products
           .map((p) => {
             const name = p.title || p.name_ar || p.name_en || p.name || `منتج ${p.id}`;
-            let price: number | string = 0;
-            if (typeof p.price === 'string') {
+            const currency = p.currency || 'د.ك';
+            
+            // Get price - use discounted_price if available, otherwise use price
+            let price: number = 0;
+            if (p.has_discount && p.discounted_price !== undefined) {
+              price = p.discounted_price;
+            } else if (typeof p.price === 'string') {
               price = parseFloat(p.price) || 0;
             } else if (typeof p.price === 'number') {
               price = p.price;
             } else {
               price = p.sale_price || p.discounted_price || 0;
             }
-            const currency = p.currency || 'د.ك';
-            return `${name} (رقم المنتج: ${p.id}) - السعر: ${price} ${currency}`;
+            
+            // Build product line with discount information if available
+            let productLine = `${name} (رقم المنتج: ${p.id}) - السعر: ${price} ${currency}`;
+            
+            // Add discount information if product has discount
+            if (p.has_discount && p.price_before_discount && p.discount_percentage) {
+              const originalPrice = p.price_before_discount;
+              productLine += ` (كان ${originalPrice} ${currency} - خصم ${p.discount_percentage}%)`;
+            }
+            
+            return productLine;
           })
           .join('\n');
 
@@ -77,6 +94,33 @@ export class GeminiService {
       logger.error('Error updating product catalog:', error.message || error);
       this.productCatalog = 'لا توجد منتجات متاحة حالياً. يرجى المحاولة لاحقاً.';
       this.systemPrompt = this.getSystemPrompt();
+    }
+  }
+
+  // Start automatic product catalog updates every 30 minutes
+  startAutoUpdate(): void {
+    // Clear any existing interval
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+    }
+
+    // Set up interval to update every 30 minutes
+    this.updateInterval = setInterval(() => {
+      logger.info('Auto-updating product catalog (every 30 minutes)...');
+      this.updateProductCatalog().catch((error) => {
+        logger.error('Error in auto-update of product catalog:', error);
+      });
+    }, this.UPDATE_INTERVAL_MS);
+
+    logger.info(`Started automatic product catalog updates every ${this.UPDATE_INTERVAL_MS / 60000} minutes`);
+  }
+
+  // Stop automatic product catalog updates
+  stopAutoUpdate(): void {
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = null;
+      logger.info('Stopped automatic product catalog updates');
     }
   }
 

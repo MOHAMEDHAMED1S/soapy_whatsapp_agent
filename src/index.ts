@@ -10,6 +10,9 @@ const shutdown = async (signal: string) => {
   logger.info(`Received ${signal}, shutting down gracefully...`);
   
   try {
+    // Stop automatic product catalog updates
+    geminiService.stopAutoUpdate();
+    
     await whatsappBot.destroy();
     databaseManager.close();
     logger.info('Shutdown complete');
@@ -53,9 +56,13 @@ const main = async () => {
 
     // Update product catalog in Gemini service (non-blocking)
     logger.info('Updating product catalog in Gemini service...');
-    geminiService.updateProductCatalog().catch((error) => {
+    await geminiService.updateProductCatalog().catch((error) => {
       logger.warn('Failed to update product catalog, continuing anyway:', error.message);
     });
+
+    // Start automatic product catalog updates every 30 minutes
+    logger.info('Starting automatic product catalog updates (every 30 minutes)...');
+    geminiService.startAutoUpdate();
 
     // Initialize WhatsApp bot (this is blocking and required)
     logger.info('Initializing WhatsApp bot...');
