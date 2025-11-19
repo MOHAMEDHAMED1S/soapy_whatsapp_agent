@@ -198,7 +198,7 @@ ${currentOrderInfo}
 
 المعلومات المطلوبة لإنشاء طلب:
 - اسم العميل (إجباري)
-- رقم الهاتف (سيتم الحصول عليه تلقائياً من رقم WhatsApp)
+- رقم الهاتف (إجباري - يجب أن تسأل العميل عن رقم هاتفه)
 - البريد الإلكتروني (يجب أن تسأل عنه، لكنه اختياري - إذا لم يقدمه العميل أو رفض، يمكنك المتابعة)
 - العنوان: الشارع، المحافظة، المدينة (لا حاجة للرمز البريدي)
 - المنتجات والكميات (إجباري)
@@ -278,6 +278,7 @@ ${currentOrderInfo}
 11. إذا لم تستخدم دالة create_order، لا يمكنك إنشاء الطلب - أخبر العميل بذلك بوضوح
 
 ملاحظات مهمة عن جمع معلومات الطلب:
+- رقم الهاتف: يجب أن تسأل العميل عن رقم هاتفه. رقم الهاتف إجباري ومطلوب لإنشاء الطلب. لا تستخدم رقم WhatsApp تلقائياً - يجب أن تسأل العميل عن رقم هاتفه صراحةً.
 - البريد الإلكتروني: يجب أن تسأل العميل عن بريده الإلكتروني(مهم)، ولكن وضح له بشكل صريح أن البريد الإلكتروني اختياري وأنه يمكنه تخطيه إذا لم يرد تقديمه. إذا رفض العميل أو لم يقدم بريداً، يمكنك المتابعة في إنشاء الطلب. استخدم عبارات مثل: "هل لديك بريد إلكتروني؟ (اختياري)" أو "يمكنك تقديم بريدك الإلكتروني إذا رغبت (اختياري)".
 - العنوان: تحتاج فقط للشارع، المحافظة، والمدينة. لا حاجة للرمز البريدي.
 - عند طلب البريد الإلكتروني، تأكد من أنك تذكر أنه اختياري بشكل واضح للعميل.
@@ -405,13 +406,17 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       },
       {
         name: 'create_order',
-        description: 'إنشاء طلب جديد. هذه هي الطريقة الوحيدة لإنشاء الطلبات - لا توجد طريقة أخرى. استخدم هذه الدالة فقط بعد: 1) جمع جميع معلومات الطلب (الاسم، العنوان، المنتجات)، 2) استخدام calculate_order_total لعرض ملخص الطلب، 3) الحصول على تأكيد من العميل. لا تستخدم هذه الدالة مباشرة - يجب استخدام calculate_order_total أولاً دائماً. ممنوع منعاً باتاً إنشاء طلبات وهمية - لا تقل "تم إنشاء الطلب" أو "رقم الطلب هو X" بدون استخدام هذه الدالة فعلياً. لا تخترع أرقام طلبات - فقط هذه الدالة تعطيك رقم الطلب الحقيقي من النظام.',
+        description: 'إنشاء طلب جديد. هذه هي الطريقة الوحيدة لإنشاء الطلبات - لا توجد طريقة أخرى. استخدم هذه الدالة فقط بعد: 1) جمع جميع معلومات الطلب (الاسم، رقم الهاتف، العنوان، المنتجات)، 2) استخدام calculate_order_total لعرض ملخص الطلب، 3) الحصول على تأكيد من العميل. لا تستخدم هذه الدالة مباشرة - يجب استخدام calculate_order_total أولاً دائماً. ممنوع منعاً باتاً إنشاء طلبات وهمية - لا تقل "تم إنشاء الطلب" أو "رقم الطلب هو X" بدون استخدام هذه الدالة فعلياً. لا تخترع أرقام طلبات - فقط هذه الدالة تعطيك رقم الطلب الحقيقي من النظام.',
         parameters: {
           type: 'object',
           properties: {
             customer_name: { 
               type: 'string',
               description: 'اسم العميل الكامل (إجباري)'
+            },
+            customer_phone: {
+              type: 'string',
+              description: 'رقم هاتف العميل (إجباري - يجب أن تسأل العميل عن رقم هاتفه. لا تستخدم رقم WhatsApp تلقائياً)'
             },
             customer_email: { 
               type: 'string',
@@ -465,6 +470,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           },
           required: [
             'customer_name',
+            'customer_phone',
             'shipping_address',
             'items',
           ],
@@ -1017,6 +1023,16 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               conversation?.metadata
             );
 
+            // Get customer phone from args (required field)
+            if (!args.customer_phone || args.customer_phone.trim() === '') {
+              return 'يرجى تقديم رقم هاتف العميل. رقم الهاتف مطلوب لإنشاء الطلب.';
+            }
+
+            // Normalize phone number (remove any non-digit characters except +)
+            let customerPhoneNumber = args.customer_phone.trim();
+            // Remove spaces, dashes, and other formatting
+            customerPhoneNumber = customerPhoneNumber.replace(/[\s\-\(\)]/g, '');
+
             // Convert items to API format (product_id instead of id) for createOrder
             const apiItemsForOrder = items.map((item: any) => ({
               product_id: item.id, // API expects product_id, not id
@@ -1025,7 +1041,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
             const orderResponse = await apiService.createOrder({
               customer_name: args.customer_name,
-              customer_phone: customerPhone, // Use WhatsApp phone number
+              customer_phone: customerPhoneNumber, // Use phone number provided by customer
               customer_email: customerEmail,
               shipping_address: shippingAddress,
               items: apiItemsForOrder,
