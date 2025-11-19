@@ -23,7 +23,16 @@ export class WhatsAppBot {
           '--no-zygote',
           '--single-process',
           '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-features=TranslateUI',
+          '--disable-ipc-flooding-protection',
         ],
+        timeout: 60000, // 60 seconds timeout for VPS
       },
     });
 
@@ -116,35 +125,50 @@ export class WhatsAppBot {
   async sendTypingIndicator(phone: string): Promise<void> {
     try {
       if (!this.isReady) {
+        logger.warn(`Cannot send typing indicator - WhatsApp client not ready`);
         return;
       }
 
-      const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
-      const chat = await this.client.getChatById(chatId);
+      // Normalize phone number - remove any existing suffix and add @c.us
+      const normalizedPhone = phone.split('@')[0];
+      const chatId = `${normalizedPhone}@c.us`;
       
-      // Send initial typing indicator
-      await chat.sendStateTyping();
-      logger.debug(`Typing indicator sent to ${phone}`);
+      try {
+        const chat = await this.client.getChatById(chatId);
+        
+        // Send initial typing indicator
+        await chat.sendStateTyping();
+        logger.debug(`Typing indicator sent to ${normalizedPhone}`);
 
-      // Clear any existing interval for this phone
-      if (this.typingIntervals.has(phone)) {
-        clearInterval(this.typingIntervals.get(phone)!);
-      }
-
-      // Keep typing indicator alive by refreshing it every 10 seconds
-      // WhatsApp automatically clears typing indicator after ~15 seconds
-      const interval = setInterval(async () => {
-        try {
-          if (this.isReady) {
-            await chat.sendStateTyping();
-            logger.debug(`Typing indicator refreshed for ${phone}`);
-          }
-        } catch (error) {
-          logger.error(`Error refreshing typing indicator for ${phone}:`, error);
+        // Clear any existing interval for this phone
+        if (this.typingIntervals.has(normalizedPhone)) {
+          clearInterval(this.typingIntervals.get(normalizedPhone)!);
         }
-      }, 10000); // Refresh every 10 seconds
 
-      this.typingIntervals.set(phone, interval);
+        // Keep typing indicator alive by refreshing it every 10 seconds
+        // WhatsApp automatically clears typing indicator after ~15 seconds
+        const interval = setInterval(async () => {
+          try {
+            if (this.isReady) {
+              const currentChat = await this.client.getChatById(chatId);
+              await currentChat.sendStateTyping();
+              logger.debug(`Typing indicator refreshed for ${normalizedPhone}`);
+            }
+          } catch (error) {
+            logger.error(`Error refreshing typing indicator for ${normalizedPhone}:`, error);
+            // Clear interval on error
+            if (this.typingIntervals.has(normalizedPhone)) {
+              clearInterval(this.typingIntervals.get(normalizedPhone)!);
+              this.typingIntervals.delete(normalizedPhone);
+            }
+          }
+        }, 10000); // Refresh every 10 seconds
+
+        this.typingIntervals.set(normalizedPhone, interval);
+      } catch (chatError: any) {
+        logger.error(`Error getting chat for ${normalizedPhone}:`, chatError);
+        // Don't throw - typing indicator is optional
+      }
     } catch (error) {
       logger.error(`Error sending typing indicator to ${phone}:`, error);
       // Don't throw error - typing indicator is optional
@@ -158,16 +182,25 @@ export class WhatsAppBot {
         return;
       }
 
+      // Normalize phone number
+      const normalizedPhone = phone.split('@')[0];
+
       // Clear the interval that keeps typing indicator alive
-      if (this.typingIntervals.has(phone)) {
-        clearInterval(this.typingIntervals.get(phone)!);
-        this.typingIntervals.delete(phone);
+      if (this.typingIntervals.has(normalizedPhone)) {
+        clearInterval(this.typingIntervals.get(normalizedPhone)!);
+        this.typingIntervals.delete(normalizedPhone);
       }
 
-      const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
-      const chat = await this.client.getChatById(chatId);
-      await chat.clearState();
-      logger.debug(`Typing indicator cleared for ${phone}`);
+      // Try to clear typing state (optional - WhatsApp clears it automatically)
+      try {
+        const chatId = `${normalizedPhone}@c.us`;
+        const chat = await this.client.getChatById(chatId);
+        await chat.clearState();
+        logger.debug(`Typing indicator cleared for ${normalizedPhone}`);
+      } catch (error) {
+        // Ignore errors when clearing state - it's optional
+        logger.debug(`Could not clear typing state for ${normalizedPhone} (this is normal)`);
+      }
     } catch (error) {
       logger.error(`Error clearing typing indicator for ${phone}:`, error);
       // Don't throw error - clearing typing indicator is optional
@@ -178,15 +211,28 @@ export class WhatsAppBot {
   async sendMessage(phone: string, message: string): Promise<Message> {
     try {
       if (!this.isReady) {
+        logger.error(`Cannot send message - WhatsApp client not ready`);
         throw new Error('WhatsApp client is not ready');
       }
 
-      const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
-      const sentMessage = await this.client.sendMessage(chatId, message);
-      logger.debug(`Message sent to ${phone}`);
-      return sentMessage;
+      // Normalize phone number - remove any existing suffix and add @c.us
+      const normalizedPhone = phone.split('@')[0];
+      const chatId = `${normalizedPhone}@c.us`;
+      
+      try {
+        const sentMessage = await this.client.sendMessage(chatId, message);
+        logger.debug(`Message sent to ${normalizedPhone}`);
+        return sentMessage;
+      } catch (sendError: any) {
+        logger.error(`Error sending message to ${normalizedPhone}:`, {
+          error: sendError.message,
+          stack: sendError.stack,
+          chatId,
+        });
+        throw sendError;
+      }
     } catch (error) {
-      logger.error(`Error sending message to ${phone}:`, error);
+      logger.error(`Error in sendMessage for ${phone}:`, error);
       throw error;
     }
   }

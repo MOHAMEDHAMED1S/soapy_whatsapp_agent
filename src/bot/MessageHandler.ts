@@ -12,8 +12,9 @@ export class MessageHandler {
 
   // Extract phone number from WhatsApp message
   private extractPhoneNumber(from: string): string {
-    // WhatsApp format: 965XXXXXXXXX@c.us
-    return from.replace('@c.us', '');
+    // WhatsApp format: 965XXXXXXXXX@c.us or 271892921467012@lid
+    // Remove all suffixes (@c.us, @lid, @g.us, etc.)
+    return from.split('@')[0];
   }
 
   // Handle incoming message
