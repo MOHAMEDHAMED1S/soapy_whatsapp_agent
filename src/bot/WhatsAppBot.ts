@@ -82,6 +82,9 @@ export class WhatsAppBot {
           return;
         }
 
+        // Log message source for debugging
+        logger.debug(`Message from: ${msg.from}, type: ${typeof msg.from}`);
+
         // Process message
         await messageHandler.handleMessage(msg);
       } catch (error) {
@@ -129,16 +132,40 @@ export class WhatsAppBot {
         return;
       }
 
-      // Normalize phone number - remove any existing suffix and add @c.us
+      // Normalize phone number - remove any existing suffix
       const normalizedPhone = phone.split('@')[0];
-      const chatId = `${normalizedPhone}@c.us`;
+      
+      // Try multiple chat ID formats
+      const chatIdFormats = [
+        `${normalizedPhone}@c.us`,  // Standard format
+        `${normalizedPhone}@lid`,   // LID format (for business accounts)
+      ];
+
+      let chatId: string | null = null;
+      
+      // Find working chat ID format
+      for (const format of chatIdFormats) {
+        try {
+          await this.client.getChatById(format);
+          chatId = format;
+          break; // Found working format
+        } catch (error) {
+          // Try next format
+          continue;
+        }
+      }
+
+      if (!chatId) {
+        logger.debug(`Could not find chat for ${normalizedPhone} - skipping typing indicator`);
+        return; // Don't throw - typing indicator is optional
+      }
       
       try {
         const chat = await this.client.getChatById(chatId);
         
         // Send initial typing indicator
         await chat.sendStateTyping();
-        logger.debug(`Typing indicator sent to ${normalizedPhone}`);
+        logger.debug(`Typing indicator sent to ${normalizedPhone} using ${chatId}`);
 
         // Clear any existing interval for this phone
         if (this.typingIntervals.has(normalizedPhone)) {
@@ -149,7 +176,7 @@ export class WhatsAppBot {
         // WhatsApp automatically clears typing indicator after ~15 seconds
         const interval = setInterval(async () => {
           try {
-            if (this.isReady) {
+            if (this.isReady && chatId) {
               const currentChat = await this.client.getChatById(chatId);
               await currentChat.sendStateTyping();
               logger.debug(`Typing indicator refreshed for ${normalizedPhone}`);
@@ -192,15 +219,26 @@ export class WhatsAppBot {
       }
 
       // Try to clear typing state (optional - WhatsApp clears it automatically)
-      try {
-        const chatId = `${normalizedPhone}@c.us`;
-        const chat = await this.client.getChatById(chatId);
-        await chat.clearState();
-        logger.debug(`Typing indicator cleared for ${normalizedPhone}`);
-      } catch (error) {
-        // Ignore errors when clearing state - it's optional
-        logger.debug(`Could not clear typing state for ${normalizedPhone} (this is normal)`);
+      // Try multiple formats
+      const chatIdFormats = [
+        `${normalizedPhone}@c.us`,
+        `${normalizedPhone}@lid`,
+      ];
+
+      for (const chatId of chatIdFormats) {
+        try {
+          const chat = await this.client.getChatById(chatId);
+          await chat.clearState();
+          logger.debug(`Typing indicator cleared for ${normalizedPhone} using ${chatId}`);
+          return; // Success, exit
+        } catch (error) {
+          // Try next format
+          continue;
+        }
       }
+      
+      // If all formats failed, it's okay - clearing state is optional
+      logger.debug(`Could not clear typing state for ${normalizedPhone} (this is normal)`);
     } catch (error) {
       logger.error(`Error clearing typing indicator for ${phone}:`, error);
       // Don't throw error - clearing typing indicator is optional
@@ -215,22 +253,54 @@ export class WhatsAppBot {
         throw new Error('WhatsApp client is not ready');
       }
 
-      // Normalize phone number - remove any existing suffix and add @c.us
+      // Normalize phone number - remove any existing suffix
       const normalizedPhone = phone.split('@')[0];
-      const chatId = `${normalizedPhone}@c.us`;
       
-      try {
-        const sentMessage = await this.client.sendMessage(chatId, message);
-        logger.debug(`Message sent to ${normalizedPhone}`);
-        return sentMessage;
-      } catch (sendError: any) {
-        logger.error(`Error sending message to ${normalizedPhone}:`, {
-          error: sendError.message,
-          stack: sendError.stack,
-          chatId,
-        });
-        throw sendError;
+      // Try multiple chat ID formats
+      const chatIdFormats = [
+        `${normalizedPhone}@c.us`,  // Standard format
+        `${normalizedPhone}@lid`,    // LID format (for business accounts)
+      ];
+
+      let lastError: any = null;
+      
+      for (const chatId of chatIdFormats) {
+        try {
+          // First, try to get the chat to check if it exists
+          await this.client.getChatById(chatId);
+          
+          // If chat exists, try to send message
+          const sentMessage = await this.client.sendMessage(chatId, message);
+          logger.debug(`Message sent to ${normalizedPhone} using ${chatId}`);
+          return sentMessage;
+        } catch (error: any) {
+          // Check if error is "No LID for user" - try next format
+          if (error.message && error.message.includes('No LID for user')) {
+            logger.debug(`No LID for ${normalizedPhone}, trying next format...`);
+            lastError = error;
+            continue; // Try next format
+          }
+          
+          // If it's a different error, log and try next format
+          if (chatIdFormats.indexOf(chatId) < chatIdFormats.length - 1) {
+            logger.debug(`Error with ${chatId}, trying next format:`, error.message);
+            lastError = error;
+            continue;
+          }
+          
+          // Last format failed, throw error
+          logger.error(`Error sending message to ${normalizedPhone} with ${chatId}:`, {
+            error: error.message,
+            stack: error.stack,
+            chatId,
+          });
+          throw error;
+        }
       }
+      
+      // All formats failed
+      logger.error(`Failed to send message to ${normalizedPhone} with all formats`);
+      throw lastError || new Error(`Failed to send message to ${normalizedPhone}`);
     } catch (error) {
       logger.error(`Error in sendMessage for ${phone}:`, error);
       throw error;
