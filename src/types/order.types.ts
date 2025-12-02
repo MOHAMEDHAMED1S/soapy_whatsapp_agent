@@ -1,19 +1,22 @@
-import { CartItem, ShippingAddress } from './api.types';
+import { CartItem, ShippingAddress, CountryCode, CalculateShippingResponse } from './api.types';
 
 // Order Types
 export interface OrderData {
   customer_name: string;
   customer_phone: string;
-  customer_email: string;
+  customer_email?: string; // Optional
+  country_code: CountryCode; // NEW - Required for shipping
   shipping_address: ShippingAddress;
   items: CartItem[];
-  shipping_amount: number;
+  discount_code?: string;
+  notes?: string;
+  // shipping_amount removed - calculated automatically
+  shipping_details?: CalculateShippingResponse; // NEW - Shipping calculation details
 }
 
 export interface OrderInfo {
   order_id: number;
   order_number: string;
-  tracking_number: string;
   total_amount: number;
   subtotal_amount: number;
   discount_amount: number;
@@ -41,6 +44,7 @@ export enum OrderStep {
 }
 
 export enum OrderField {
+  COUNTRY_CODE = 'country_code', // NEW - Must be collected first
   CUSTOMER_NAME = 'customer_name',
   CUSTOMER_PHONE = 'customer_phone',
   CUSTOMER_EMAIL = 'customer_email',

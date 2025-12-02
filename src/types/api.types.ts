@@ -1,5 +1,17 @@
 import { Product } from './product.types';
 
+// Country Code Types
+export type CountryCode = 'KW' | 'SA' | 'AE' | 'BH' | 'OM' | 'QA';
+
+export const SUPPORTED_COUNTRIES: Record<CountryCode, string> = {
+  KW: 'الكويت',
+  SA: 'السعودية',
+  AE: 'الإمارات',
+  BH: 'البحرين',
+  OM: 'عُمان',
+  QA: 'قطر'
+};
+
 // API Response Types
 export interface ApiResponse<T> {
   success: boolean;
@@ -126,11 +138,13 @@ export interface ShippingAddress {
 export interface CreateOrderRequest {
   customer_name: string;
   customer_phone: string;
-  customer_email: string; // Will default to guest@soapy.com if not provided
+  customer_email?: string; // Optional - Will default to guest@soapy.com if not provided
+  country_code: CountryCode; // NEW - Required for shipping calculation
   shipping_address: ShippingAddress;
   items: CartItem[];
   discount_code?: string;
-  shipping_amount: number;
+  notes?: string; // Optional order notes
+  // shipping_amount removed - calculated automatically by API
 }
 
 export interface CreateOrderResponse {
@@ -143,6 +157,9 @@ export interface CreateOrderResponse {
   shipping_amount: number;
   currency: string;
   next_step: string;
+  shipping_details?: CalculateShippingResponse; // NEW - Detailed shipping calculation
+  discount_code?: string | null;
+  free_shipping?: boolean;
 }
 
 export interface PaymentMethod {
@@ -194,6 +211,35 @@ export interface PaymentStatusResponse {
 
 export interface ShippingCostResponse {
   shipping_cost: string;
+}
+
+// New Shipping Calculation Types
+export interface CalculateShippingRequest {
+  product_ids: number[];
+  quantities: number[];
+  country_code: CountryCode;
+}
+
+export interface ShippingBreakdown {
+  matched_tier: {
+    max_weight_kg: number;
+    base_price: number;
+    additional_percentage: number;
+  };
+  actual_weight_kg: number;
+  rounded_to_tier_kg: number;
+  base_price: number;
+  additional_fee: number;
+  final_price: number;
+}
+
+export interface CalculateShippingResponse {
+  total_weight_grams: number;
+  total_weight_kg: number;
+  shipping_cost: number;
+  breakdown: ShippingBreakdown;
+  country_code: string;
+  currency: string;
 }
 
 // Order Tracking Types

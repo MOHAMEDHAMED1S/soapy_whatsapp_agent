@@ -17,6 +17,8 @@ import {
   OrderTrackingResponse,
   ValidateDiscountCodeRequest,
   ValidateDiscountCodeResponse,
+  CalculateShippingRequest,
+  CalculateShippingResponse,
 } from '../types/api.types';
 import { Product } from '../types/product.types';
 
@@ -61,7 +63,7 @@ export class ApiService {
   private mapApiProductToProduct(apiProduct: any): Product {
     const priceNum = parseFloat(apiProduct.price || '0');
     const discountedPrice = apiProduct.discounted_price || priceNum;
-    
+
     return {
       ...apiProduct,
       // Keep original price as string (as API returns it)
@@ -87,14 +89,14 @@ export class ApiService {
       const response = await this.client.get<any>('/products', {
         params,
       });
-      
+
       // API returns: { success: true, data: { data: [...], current_page: ..., ... }, message: "..." }
       const apiData = response.data.data;
-      
+
       if (response.data.success && apiData && Array.isArray(apiData.data)) {
         // Map products using our mapper
         const mappedProducts = apiData.data.map((p: any) => this.mapApiProductToProduct(p));
-        
+
         // Create ProductsResponse structure
         const productsResponse: ProductsResponse = {
           data: mappedProducts,
@@ -113,7 +115,7 @@ export class ApiService {
           hasMore: apiData.next_page_url !== null,
           products: mappedProducts, // Alias for backward compatibility
         };
-        
+
         return {
           success: response.data.success,
           data: productsResponse,
@@ -121,7 +123,7 @@ export class ApiService {
           errors: response.data.errors,
         };
       }
-      
+
       // Fallback: return as-is if structure is different
       logger.warn('Unexpected API response structure for products');
       return response.data;
@@ -141,7 +143,7 @@ export class ApiService {
   async getProductById(id: string | number): Promise<ApiResponse<Product>> {
     try {
       const response = await this.client.get<any>(`/products/${id}`);
-      
+
       // API returns: { success: true, data: {...}, message: "..." }
       if (response.data.success && response.data.data) {
         return {
@@ -151,7 +153,7 @@ export class ApiService {
           errors: response.data.errors,
         };
       }
-      
+
       return response.data;
     } catch (error: any) {
       logger.error(`Error fetching product ${id}:`, error);
@@ -174,11 +176,11 @@ export class ApiService {
   async getFeaturedProducts(): Promise<ApiResponse<Product[]>> {
     try {
       const response = await this.client.get<any>('/products/featured');
-      
+
       // API returns: { success: true, data: [...], message: "..." }
       if (response.data.success && Array.isArray(response.data.data)) {
         const mappedProducts = response.data.data.map((p: any) => this.mapApiProductToProduct(p));
-        
+
         return {
           success: response.data.success,
           data: mappedProducts,
@@ -186,7 +188,7 @@ export class ApiService {
           errors: response.data.errors,
         };
       }
-      
+
       return response.data;
     } catch (error: any) {
       logger.error('Error fetching featured products:', error);
@@ -194,7 +196,7 @@ export class ApiService {
     }
   }
 
-  // Get shipping cost
+  // Get shipping cost (legacy - for backward compatibility)
   async getShippingCost(): Promise<ApiResponse<ShippingCostResponse>> {
     try {
       const response = await this.client.get<ApiResponse<ShippingCostResponse>>('/shipping/cost');
@@ -202,6 +204,40 @@ export class ApiService {
     } catch (error: any) {
       logger.error('Error fetching shipping cost:', error);
       throw new Error(`Failed to fetch shipping cost: ${error.message}`);
+    }
+  }
+
+  // Calculate shipping cost based on products, quantities, and country
+  async calculateShippingCost(request: CalculateShippingRequest): Promise<ApiResponse<CalculateShippingResponse>> {
+    try {
+      logger.debug('Calculate shipping cost request:', JSON.stringify(request, null, 2));
+
+      const response = await this.client.post<ApiResponse<CalculateShippingResponse>>(
+        '/shipping/calculate',
+        request
+      );
+
+      logger.debug('Calculate shipping cost response:', {
+        status: response.status,
+        data: response.data,
+      });
+
+      return response.data;
+    } catch (error: any) {
+      logger.error('Error calculating shipping cost:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+
+      // If API returns error response with data, return it
+      if (error.response?.data) {
+        return error.response.data;
+      }
+
+      // Otherwise, throw error
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to calculate shipping cost';
+      throw new Error(errorMessage);
     }
   }
 
@@ -228,14 +264,14 @@ export class ApiService {
         '/checkout/calculate-total',
         request
       );
-      
+
       logger.debug('Calculate total raw response:', {
         status: response.status,
         data: response.data,
         dataType: typeof response.data,
         keys: response.data ? Object.keys(response.data) : [],
       });
-      
+
       // Validate response structure
       if (!response.data) {
         logger.error('API returned empty response data');
@@ -245,17 +281,17 @@ export class ApiService {
           data: {} as OrderTotal,
         };
       }
-      
+
       // Handle different response structures
       const responseData = response.data as any;
-      
+
       // Case 1: Standard ApiResponse format { success, data, message }
       if (responseData.success !== undefined) {
         // If data field exists, use it
         if (responseData.data) {
           return responseData as ApiResponse<OrderTotal>;
         }
-        
+
         // If data field doesn't exist but response has OrderTotal fields directly
         // Check if response.data itself is OrderTotal (flat structure)
         if (responseData.subtotal !== undefined || responseData.total !== undefined) {
@@ -266,7 +302,7 @@ export class ApiService {
             message: responseData.message || 'Order total calculated successfully',
           };
         }
-        
+
         // If success is true but no data, log error
         if (responseData.success && !responseData.data) {
           logger.error('API returned success but no data field:', JSON.stringify(responseData, null, 2));
@@ -277,7 +313,7 @@ export class ApiService {
           };
         }
       }
-      
+
       // Case 2: Direct OrderTotal structure (no wrapper)
       if (responseData.subtotal !== undefined || responseData.total !== undefined) {
         logger.info('API returned direct OrderTotal structure, wrapping in ApiResponse');
@@ -287,7 +323,7 @@ export class ApiService {
           message: 'Order total calculated successfully',
         };
       }
-      
+
       // Unknown structure
       logger.error('Unknown API response structure:', JSON.stringify(responseData, null, 2));
       return {
@@ -301,12 +337,12 @@ export class ApiService {
         response: error.response?.data,
         status: error.response?.status,
       });
-      
+
       // If API returns error response with data, return it
       if (error.response?.data) {
         return error.response.data;
       }
-      
+
       // Otherwise, return error response format
       return {
         success: false,

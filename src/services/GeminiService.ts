@@ -55,7 +55,7 @@ export class GeminiService {
           .map((p) => {
             const name = p.title || p.name_ar || p.name_en || p.name || `منتج ${p.id}`;
             const currency = p.currency || 'د.ك';
-            
+
             // Get price - use discounted_price if available, otherwise use price
             let price: number = 0;
             if (p.has_discount && p.discounted_price !== undefined) {
@@ -67,16 +67,16 @@ export class GeminiService {
             } else {
               price = p.sale_price || p.discounted_price || 0;
             }
-            
+
             // Build product line with discount information if available
             let productLine = `${name} (رقم المنتج: ${p.id}) - السعر: ${price} ${currency}`;
-            
+
             // Add discount information if product has discount
             if (p.has_discount && p.price_before_discount && p.discount_percentage) {
               const originalPrice = p.price_before_discount;
               productLine += ` (كان ${originalPrice} ${currency} - خصم ${p.discount_percentage}%)`;
             }
-            
+
             return productLine;
           })
           .join('\n');
@@ -136,8 +136,8 @@ export class GeminiService {
       // If service not available, continue without admin prompt
       logger.debug('AdminPromptService not available, continuing without admin prompt');
     }
-    
-    const adminPromptSection = adminPrompt 
+
+    const adminPromptSection = adminPrompt
       ? `\n\nتعليمات إضافية من المالك الإداري:\n${adminPrompt}\n`
       : '';
 
@@ -196,20 +196,40 @@ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
 
 ${currentOrderInfo}
 
-المعلومات المطلوبة لإنشاء طلب:
-- اسم العميل (إجباري)
-- رقم الهاتف (إجباري - يجب أن تسأل العميل عن رقم هاتفه)
-- البريد الإلكتروني (يجب أن تسأل عنه، لكنه اختياري - إذا لم يقدمه العميل أو رفض، يمكنك المتابعة)
-- العنوان: الشارع، المحافظة، المدينة (لا حاجة للرمز البريدي)
-- المنتجات والكميات (إجباري)
-- كود الخصم (اختياري - إذا أراد العميل تطبيق كود خصم، اسأله عنه وطبق التحقق)
+المعلومات المطلوبة لإنشاء طلب (بالترتيب):
+
+⚠️ مهم جداً: يجب طلب الدولة في بداية المحادثة قبل أي شيء آخر!
+
+1. **الدولة** (country_code) - إجباري - اسأل أولاً:
+   الدول المتاحة للتوصيل:
+   - KW: الكويت
+   - SA: السعودية
+   - AE: الإمارات
+   - BH: البحرين
+   - OM: عُمان
+   - QA: قطر
+   
+   ملاحظة: مصر (EG) لم تعد متاحة للتوصيل
+   
+2. اسم العميل (إجباري)
+3. رقم الهاتف (إجباري - يجب أن تسأل العميل عن رقم هاتفه)
+4. البريد الإلكتروني (يجب أن تسأل عنه، لكنه اختياري - إذا لم يقدمه العميل أو رفض، يمكنك المتابعة)
+5. العنوان: الشارع، المحافظة، المدينة (لا حاجة للرمز البريدي)
+6. المنتجات والكميات (إجباري)
+7. كود الخصم (اختياري - إذا أراد العميل تطبيق كود خصم، اسأله عنه وطبق التحقق)
+
+ملاحظات مهمة عن الدولة وتكلفة الشحن:
+- الدولة (country_code) مطلوبة لحساب تكلفة الشحن - يجب طلبها في بداية أي محادثة طلب
+- تكلفة الشحن الآن تعتمد على الدولة ووزن المنتجات
+- لا تحاول حساب تكلفة الشحن بدون معرفة الدولة
+- استخدم دالة calculate_shipping_cost لحساب الشحن قبل إنشاء الطلب
 
        الدوال المتاحة:
        - search_products: البحث عن المنتجات
        - get_product_details: الحصول على تفاصيل منتج
        - get_featured_products: الحصول على المنتجات المميزة
-       - calculate_order_total: حساب إجمالي الطلب
-       - get_shipping_cost: جلب رسوم التوصيل (استخدمها عندما يسأل العميل عن تكلفة الشحن أو رسوم التوصيل)
+       - calculate_shipping_cost: حساب تكلفة الشحن بناءً على المنتجات والدولة (استخدمها عندما يسأل العميل عن تكلفة الشحن)
+       - calculate_order_total: حساب إجمالي الطلب مع تكلفة الشحن
        - validate_discount_code: التحقق من صحة كود الخصم (استخدمها عندما يريد العميل تطبيق كود خصم)
        - create_order: إنشاء طلب جديد
        - track_order: متابعة حالة الطلب باستخدام رقم الطلب
@@ -221,6 +241,7 @@ ${currentOrderInfo}
        - add_admin_prompt: إضافة أو تحديث تعليمات إضافية للبوت (دالة إدارية - متاحة فقط للمالك الإداري)
        - get_admin_prompt: عرض التعليمات الإضافية الحالية (دالة إدارية - متاحة فقط للمالك الإداري)
        - clear_admin_prompt: حذف التعليمات الإضافية (دالة إدارية - متاحة فقط للمالك الإداري)
+
 
 ملاحظة مهمة جداً عن الدوال الإدارية:
 - الدوال الإدارية (block_number, unblock_number, list_blocked_numbers, add_admin_prompt, get_admin_prompt, clear_admin_prompt) متاحة فقط للمالك الإداري
@@ -373,8 +394,33 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         },
       },
       {
+        name: 'calculate_shipping_cost',
+        description: 'حساب تكلفة الشحن بناءً على المنتجات والكميات وكود الدولة. هذه الدالة تحسب الشحن بناءً على الوزن الإجمالي والدولة. استخدمها عندما يريد العميل معرفة تكلفة الشحن قبل إنشاء الطلب.',
+        parameters: {
+          type: 'object',
+          properties: {
+            product_ids: {
+              type: 'array',
+              description: 'قائمة بـ IDs المنتجات',
+              items: { type: 'number' }
+            },
+            quantities: {
+              type: 'array',
+              description: 'قائمة بالكميات (نفس ترتيب المنتجات)',
+              items: { type: 'number' }
+            },
+            country_code: {
+              type: 'string',
+              enum: ['KW', 'SA', 'AE', 'BH', 'OM', 'QA'],
+              description: 'كود الدولة (KW=الكويت، SA=السعودية، AE=الإمارات، BH=البحرين، OM=عُمان، QA=قطر)'
+            }
+          },
+          required: ['product_ids', 'quantities', 'country_code']
+        }
+      },
+      {
         name: 'calculate_order_total',
-        description: 'حساب إجمالي الطلب بناءً على المنتجات وكمياتها. استخدم هذه الدالة دائماً قبل إنشاء الطلب لعرض ملخص الطلب للعميل. هذه دالة إجبارية قبل create_order - يجب استخدامها دائماً لعرض الملخص والتأكيد من العميل قبل إنشاء الطلب.',
+        description: 'حساب إجمالي الطلب بناءً على المنتجات وكمياتها وكود الدولة. استخدم هذه الدالة دائماً قبل إنشاء الطلب لعرض ملخص الطلب للعميل. مهم: يجب تمرير country_code لحساب تكلفة الشحن بشكل صحيح. هذه دالة إجبارية قبل create_order - يجب استخدامها دائماً لعرض الملخص والتأكيد من العميل قبل إنشاء الطلب.',
         parameters: {
           type: 'object',
           properties: {
@@ -384,11 +430,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               items: {
                 type: 'object',
                 properties: {
-                  id: { 
+                  id: {
                     type: 'number',
                     description: 'رقم المنتج'
                   },
-                  quantity: { 
+                  quantity: {
                     type: 'number',
                     description: 'الكمية'
                   },
@@ -396,12 +442,17 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                 required: ['id', 'quantity'],
               },
             },
+            country_code: {
+              type: 'string',
+              enum: ['KW', 'SA', 'AE', 'BH', 'OM', 'QA'],
+              description: 'كود الدولة - مطلوب لحساب تكلفة الشحن (KW, SA, AE, BH, OM, QA)'
+            },
             discount_code: {
               type: 'string',
               description: 'كود الخصم (اختياري - إذا كان متوفراً)',
             },
           },
-          required: ['items'],
+          required: ['items', 'country_code'],
         },
       },
       {
@@ -410,7 +461,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         parameters: {
           type: 'object',
           properties: {
-            customer_name: { 
+            customer_name: {
               type: 'string',
               description: 'اسم العميل الكامل (إجباري)'
             },
@@ -418,7 +469,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               type: 'string',
               description: 'رقم هاتف العميل (إجباري - يجب أن تسأل العميل عن رقم هاتفه. لا تستخدم رقم WhatsApp تلقائياً)'
             },
-            customer_email: { 
+            customer_email: {
               type: 'string',
               description: 'البريد الإلكتروني للعميل (اختياري - يجب أن تسأل عنه ولكن وضح أنه اختياري. إذا لم يقدمه العميل أو رفض، لا تمرره أو مرره كقيمة فارغة)'
             },
@@ -426,19 +477,19 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               type: 'object',
               description: 'عنوان الشحن - يحتاج فقط للشارع، المحافظة، والمدينة',
               properties: {
-                street: { 
+                street: {
                   type: 'string',
                   description: 'اسم الشارع ورقم المبنى'
                 },
-                city: { 
+                city: {
                   type: 'string',
                   description: 'المدينة'
                 },
-                governorate: { 
+                governorate: {
                   type: 'string',
                   description: 'المحافظة أو المنطقة'
                 },
-                postal_code: { 
+                postal_code: {
                   type: 'string',
                   description: 'الرمز البريدي (اختياري)'
                 },
@@ -451,11 +502,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               items: {
                 type: 'object',
                 properties: {
-                  product_id: { 
+                  product_id: {
                     type: 'number',
                     description: 'معرف المنتج (رقم)'
                   },
-                  quantity: { 
+                  quantity: {
                     type: 'number',
                     description: 'الكمية المطلوبة (رقم)'
                   },
@@ -467,10 +518,20 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               type: 'string',
               description: 'كود الخصم (اختياري - يجب التحقق منه باستخدام validate_discount_code قبل إضافته. إذا تم التحقق من الكود وكان صالحاً، أضفه هنا)'
             },
+            country_code: {
+              type: 'string',
+              enum: ['KW', 'SA', 'AE', 'BH', 'OM', 'QA'],
+              description: 'كود الدولة - مطلوب لحساب تكلفة الشحن تلقائياً (KW, SA, AE, BH, OM, QA)'
+            },
+            notes: {
+              type: 'string',
+              description: 'ملاحظات الطلب (اختياري)'
+            },
           },
           required: [
             'customer_name',
             'customer_phone',
+            'country_code',
             'shipping_address',
             'items',
           ],
@@ -492,11 +553,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               items: {
                 type: 'object',
                 properties: {
-                  product_id: { 
+                  product_id: {
                     type: 'number',
                     description: 'معرف المنتج (رقم)'
                   },
-                  quantity: { 
+                  quantity: {
                     type: 'number',
                     description: 'الكمية المطلوبة (رقم)'
                   },
@@ -506,15 +567,6 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             },
           },
           required: ['discount_code', 'items'],
-        },
-      },
-      {
-        name: 'get_shipping_cost',
-        description: 'جلب رسوم التوصيل. استخدم هذه الدالة عندما يسأل العميل عن تكلفة الشحن أو رسوم التوصيل أو مصاريف التوصيل.',
-        parameters: {
-          type: 'object',
-          properties: {},
-          required: [],
         },
       },
       {
@@ -697,27 +749,27 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
             if (validateResponse.success && validateResponse.data) {
               const { discount_code: discountInfo, order_summary } = validateResponse.data;
-              
+
               // Format discount code information (plain text, no markdown)
               let responseMessage = `كود الخصم "${args.discount_code}" صالح!\n\n`;
-              
+
               // Discount code details
               responseMessage += `تفاصيل كود الخصم:\n`;
               responseMessage += `نوع الخصم: ${discountInfo.type === 'percentage' ? 'نسبة مئوية' : 'مبلغ ثابت'}\n`;
               responseMessage += `قيمة الخصم: ${discountInfo.value}${discountInfo.type === 'percentage' ? '%' : ' د.ك'}\n`;
-              
+
               if (discountInfo.minimum_order_amount && parseFloat(discountInfo.minimum_order_amount) > 0) {
                 responseMessage += `الحد الأدنى للطلب: ${discountInfo.minimum_order_amount} ${order_summary.currency}\n`;
               }
-              
+
               if (discountInfo.maximum_discount_amount && parseFloat(discountInfo.maximum_discount_amount) > 0) {
                 responseMessage += `الحد الأقصى للخصم: ${discountInfo.maximum_discount_amount} ${order_summary.currency}\n`;
               }
-              
+
               if (discountInfo.remaining_usage !== undefined && discountInfo.remaining_usage >= 0) {
                 responseMessage += `عدد الاستخدامات المتبقية: ${discountInfo.remaining_usage}\n`;
               }
-              
+
               if (discountInfo.expires_at) {
                 const expireDate = new Date(discountInfo.expires_at);
                 const formattedDate = expireDate.toLocaleDateString('ar-KW', {
@@ -727,16 +779,16 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                 });
                 responseMessage += `تاريخ الانتهاء: ${formattedDate}\n`;
               }
-              
+
               // Order summary with discount applied
               responseMessage += `\nملخص الطلب مع الخصم:\n`;
               responseMessage += `المجموع الفرعي: ${order_summary.subtotal_amount} ${order_summary.currency}\n`;
               responseMessage += `مبلغ الخصم: ${order_summary.discount_amount} ${order_summary.currency}\n`;
               responseMessage += `تكلفة الشحن: ${order_summary.shipping_amount} ${order_summary.currency}\n`;
               responseMessage += `المبلغ الإجمالي بعد الخصم: ${order_summary.total_amount} ${order_summary.currency}\n\n`;
-              
+
               responseMessage += `سيتم تطبيق هذا الخصم على طلبك عند إنشاء الطلب.`;
-              
+
               return responseMessage;
             }
 
@@ -750,17 +802,59 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           }
         }
 
-        case 'get_shipping_cost': {
+        case 'calculate_shipping_cost': {
           try {
-            const shippingResponse = await apiService.getShippingCost();
-            if (shippingResponse.success) {
-              const shippingCost = shippingResponse.data.shipping_cost;
-              return `رسوم التوصيل: ${shippingCost} د.ك\n\nهذه هي رسوم التوصيل القياسية لجميع الطلبات.`;
+            const { product_ids, quantities, country_code } = args;
+
+            // Validate country code
+            const validCountries = ['KW', 'SA', 'AE', 'BH', 'OM', 'QA'];
+            if (!validCountries.includes(country_code)) {
+              const countryNames = 'الكويت (KW), السعودية (SA), الإمارات (AE), البحرين (BH), عُمان (OM), قطر (QA)';
+              return `عذراً، الدولة غير مدعومة للتوصيل.\\n\\nالدول المتاحة:\\n${countryNames}`;
             }
-            return 'حدث خطأ في جلب رسوم التوصيل. يرجى المحاولة مرة أخرى.';
+
+            logger.info('Calculating shipping cost:', { product_ids, quantities, country_code });
+
+            const response = await apiService.calculateShippingCost({
+              product_ids,
+              quantities,
+              country_code
+            });
+
+            if (response.success) {
+              const data = response.data;
+              const countryNames: Record<string, string> = {
+                'KW': 'الكويت',
+                'SA': 'السعودية',
+                'AE': 'الإمارات',
+                'BH': 'البحرين',
+                'OM': 'عُمان',
+                'QA': 'قطر'
+              };
+
+              let message = `تكلفة الشحن:\\n\\n`;
+              message += `الدولة: ${countryNames[country_code] || country_code}\\n`;
+              message += `الوزن الإجمالي: ${data.total_weight_kg} كجم (${data.total_weight_grams} جرام)\\n`;
+              message += `تكلفة الشحن: ${data.shipping_cost} ${data.currency}\\n\\n`;
+
+              // Show breakdown if available
+              if (data.breakdown) {
+                message += `تفاصيل الحساب:\\n`;
+                message += `- السعر الأساسي: ${data.breakdown.base_price} ${data.currency}\\n`;
+                if (data.breakdown.additional_fee > 0) {
+                  message += `- رسوم إضافية: ${data.breakdown.additional_fee} ${data.currency}\\n`;
+                }
+              }
+
+              return message;
+            } else {
+              const errorMsg = response.message || 'حدث خطأ في حساب تكلفة الشحن';
+              return `عذراً، ${errorMsg}\\n\\nيرجى التأكد من صحة المنتجات والكميات والمحاولة مرة أخرى.`;
+            }
           } catch (error: any) {
-            logger.error('Error getting shipping cost:', error);
-            return 'حدث خطأ في جلب رسوم التوصيل. يرجى المحاولة مرة أخرى.';
+            logger.error('Error calculating shipping cost:', error);
+            const errorMessage = error.message || 'حدث خطأ في حساب تكلفة الشحن';
+            return `حدث خطأ: ${errorMessage}\\n\\nيرجى المحاولة مرة أخرى.`;
           }
         }
 
@@ -770,19 +864,29 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             id: item.product_id || item.id,
             quantity: item.quantity,
           }));
-          
+
           // Convert items to API format (product_id instead of id)
           const apiItems = items.map((item: any) => ({
             product_id: item.id, // API expects product_id, not id
             quantity: item.quantity,
           }));
 
+          // Get country_code from args
+          const country_code = args.country_code;
+
+          // Validate country code
+          const validCountries = ['KW', 'SA', 'AE', 'BH', 'OM', 'QA'];
+          if (!country_code || !validCountries.includes(country_code)) {
+            return 'يرجى تحديد الدولة أولاً. الدول المتاحة: الكويت (KW), السعودية (SA), الإمارات (AE), البحرين (BH), عُمان (OM), قطر (QA).';
+          }
+
           try {
-            // Save order items to conversation order_data for tracking
+            // Save order items AND country_code to conversation order_data for tracking
             const conversation = conversationRepository.getConversation(customerPhone);
             const currentOrderData = conversation?.orderData || {};
-            
+
             currentOrderData.items = items;
+            currentOrderData.country_code = country_code as any; // Save country code
             if (args.discount_code) {
               currentOrderData.discount_code = args.discount_code;
             }
@@ -793,21 +897,39 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               conversation?.metadata
             );
 
-            const shippingResponse = await apiService.getShippingCost();
+            // Calculate shipping using new API that requires country_code
+            const product_ids = apiItems.map((item: any) => item.product_id);
+            const quantities = apiItems.map((item: any) => item.quantity);
+
+            const shippingResponse = await apiService.calculateShippingCost({
+              product_ids,
+              quantities,
+              country_code: country_code as any
+            });
+
             if (!shippingResponse.success) {
-              logger.error('Failed to get shipping cost:', shippingResponse.message);
-              return `حدث خطأ في جلب رسوم التوصيل: ${shippingResponse.message}\n\nيرجى المحاولة مرة أخرى.`;
+              logger.error('Failed to calculate shipping cost:', shippingResponse.message);
+              return `حدث خطأ في حساب تكلفة الشحن: ${shippingResponse.message}\\n\\nيرجى المحاولة مرة أخرى.`;
             }
-            
-            const shippingAmount = parseFloat(shippingResponse.data.shipping_cost);
-            
+
+            const shippingAmount = shippingResponse.data.shipping_cost;
+
+            // Save shipping details for later
+            currentOrderData.shipping_details = shippingResponse.data;
+            conversationRepository.saveConversation(
+              customerPhone,
+              conversation?.messages || [],
+              currentOrderData,
+              conversation?.metadata
+            );
+
             logger.info('Calculating order total with items:', apiItems);
             const totalResponse = await apiService.calculateTotal({
               items: apiItems,
               discount_code: args.discount_code, // Include discount code if provided
               shipping_amount: shippingAmount,
             });
-            
+
             logger.info('Calculate total response:', {
               success: totalResponse.success,
               message: totalResponse.message,
@@ -823,15 +945,15 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               const shipping_amount = data.shipping_amount;
               const currency = data.currency;
               const discount_amount = data.discount_amount || 0;
-              
+
               // Validate that all required fields are present
               if (subtotal === undefined || total === undefined || !currency || shipping_amount === undefined) {
                 logger.error('Invalid calculate total response data:', totalResponse.data);
                 return `عذراً، حدث خطأ في بيانات حساب الإجمالي. البيانات غير مكتملة.\n\nيرجى المحاولة مرة أخرى أو الاتصال بالدعم الفني.`;
               }
-              
+
               let message = `ملخص الطلب:\n\n`;
-              
+
               // Show items with product details from API response
               message += `المنتجات:\n`;
               if (data.items && Array.isArray(data.items)) {
@@ -841,9 +963,9 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                   const quantity = item.quantity || 1;
                   const itemTotal = item.item_total || 0;
                   const priceUsed = item.price_used || 0;
-                  
+
                   message += `- ${productName} × ${quantity}\n`;
-                  
+
                   // Show discount information if product has discount
                   if (item.product?.has_discount && item.product?.price_before_discount) {
                     const originalPrice = item.product.price_before_discount;
@@ -852,7 +974,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                   } else {
                     message += `  السعر: ${priceUsed} ${currency}\n`;
                   }
-                  
+
                   message += `  المجموع: ${itemTotal} ${currency}\n`;
                 }
               } else {
@@ -862,7 +984,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                 }
               }
               message += `\n`;
-              
+
               // Show totals
               message += `المجموع الفرعي: ${subtotal} ${currency}\n`;
               if (discount_amount && discount_amount > 0) {
@@ -871,16 +993,16 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               message += `تكلفة الشحن: ${shipping_amount} ${currency}\n`;
               message += `المبلغ الإجمالي: ${total} ${currency}\n\n`;
               message += `هل تريد تأكيد الطلب والبدء في عملية الدفع؟`;
-              
+
               return message;
             }
-            
+
             // If success is true but data is missing
             if (totalResponse.success && !totalResponse.data) {
               logger.error('Calculate total returned success but no data:', totalResponse);
               return `عذراً، حدث خطأ في بيانات حساب الإجمالي. النظام لم يعيد البيانات المطلوبة.\n\nيرجى المحاولة مرة أخرى أو الاتصال بالدعم الفني.\nلا يمكنني حساب الإجمالي يدوياً - يجب أن يتم الحساب من خلال النظام.`;
             }
-            
+
             // Handle API error response
             const errorMsg = totalResponse.message || 'حدث خطأ في حساب الإجمالي';
             logger.error('API Error calculating total:', {
@@ -888,19 +1010,19 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               errors: totalResponse.errors,
               items: apiItems,
             });
-            
+
             // Build detailed error message
             let errorMessage = `عذراً، حدث خطأ تقني في حساب إجمالي الطلب.\n\n`;
             errorMessage += `السبب: ${errorMsg}\n`;
-            
+
             if (totalResponse.errors) {
               const errorDetails = Object.values(totalResponse.errors).flat().join(', ');
               errorMessage += `التفاصيل: ${errorDetails}\n`;
             }
-            
+
             errorMessage += `\nيرجى المحاولة مرة أخرى لاحقاً أو الاتصال بالدعم الفني.\n`;
             errorMessage += `لا يمكنني حساب الإجمالي يدوياً - يجب أن يتم الحساب من خلال النظام.`;
-            
+
             return errorMessage;
           } catch (error: any) {
             logger.error('Error calculating order total:', {
@@ -909,47 +1031,65 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               response: error.response?.data,
               items: apiItems,
             });
-            
+
             // Provide more detailed error message
             const errorMessage = error.response?.data?.message || error.message || 'خطأ غير معروف';
-            const errorDetails = error.response?.data?.errors 
+            const errorDetails = error.response?.data?.errors
               ? Object.values(error.response.data.errors).flat().join(', ')
               : '';
-            
+
             // Build error message that prevents manual calculation
             let errorMsg = `عذراً، حدث خطأ تقني في حساب إجمالي الطلب.\n\n`;
             errorMsg += `السبب: ${errorMessage}\n`;
-            
+
             if (errorDetails) {
               errorMsg += `التفاصيل: ${errorDetails}\n`;
             }
-            
+
             errorMsg += `\nيرجى المحاولة مرة أخرى لاحقاً أو الاتصال بالدعم الفني.\n`;
             errorMsg += `لا يمكنني حساب الإجمالي يدوياً - يجب أن يتم الحساب من خلال النظام.`;
-            
+
             return errorMsg;
           }
         }
 
         case 'create_order': {
           try {
+            // Get and validate country_code
+            const country_code = args.country_code;
+            const validCountries = ['KW', 'SA', 'AE', 'BH', 'OM', 'QA'];
+
+            if (!country_code || !validCountries.includes(country_code)) {
+              return 'يرجى تحديد الدولة. الدول المتاحة: الكويت (KW), السعودية (SA), الإمارات (AE), البحرين (BH), عُمان (OM), قطر (QA).';
+            }
+
             // First, verify order total by calling calculate_order_total
             // This ensures the order is calculated correctly before creation
-            const shippingResponse = await apiService.getShippingCost();
-            const shippingAmount = parseFloat(shippingResponse.data.shipping_cost);
-            
+            // const shippingResponse = await apiService.getShippingCost(); // Removed as per instruction
+            // const shippingAmount = parseFloat(shippingResponse.data.shipping_cost); // Removed as per instruction
+
             // Convert items format from API (id) to internal format (id)
             const items = args.items.map((item: any) => ({
               id: item.id || item.product_id,
               quantity: item.quantity,
             }));
-            
+
             // Convert items to API format (product_id instead of id) for calculateTotal
             const apiItemsForCalc = items.map((item: any) => ({
               product_id: item.id, // API expects product_id, not id
               quantity: item.quantity,
             }));
-            
+
+            // Retrieve shipping amount from conversation data, which was saved by calculate_order_total
+            const conversation = conversationRepository.getConversation(customerPhone);
+            const currentOrderData = conversation?.orderData || {};
+            const shippingAmount = currentOrderData.shipping_details?.shipping_cost;
+
+            if (shippingAmount === undefined || shippingAmount === null) {
+              logger.error('Shipping amount not found in conversation data for create_order.');
+              return 'حدث خطأ: لم يتم العثور على تكلفة الشحن. يرجى حساب إجمالي الطلب أولاً.';
+            }
+
             // Calculate total to verify before creating order
             const totalResponse = await apiService.calculateTotal({
               items: apiItemsForCalc,
@@ -963,7 +1103,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
             // Use provided email or default to guest@soapy.com
             const customerEmail = args.customer_email || 'guest@soapy.com';
-            
+
             // Ensure shipping_address has all required fields (postal_code is optional)
             const shippingAddress = {
               street: args.shipping_address.street,
@@ -989,29 +1129,28 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                   shipping_amount: shippingAmount,
                 });
 
-              if (validateResponse.success && validateResponse.data) {
-                // API returns success=true when code is valid, data contains discount_code and order_summary
-                discountCode = args.discount_code;
-                const discountAmount = validateResponse.data.order_summary.discount_amount;
-                logger.info(`Discount code validated: ${args.discount_code}, discount amount: ${discountAmount}`);
-              } else {
-                // If success is false, the code is invalid
-                const errorMsg = validateResponse.message || 'كود الخصم غير صالح';
-                return `كود الخصم "${args.discount_code}" غير صالح.\n${errorMsg}\n\nيرجى التحقق من الكود والمحاولة مرة أخرى، أو يمكنك المتابعة بدون كود خصم.`;
+                if (validateResponse.success && validateResponse.data) {
+                  // API returns success=true when code is valid, data contains discount_code and order_summary
+                  discountCode = args.discount_code;
+                  const discountAmount = validateResponse.data.order_summary.discount_amount;
+                  logger.info(`Discount code validated: ${args.discount_code}, discount amount: ${discountAmount}`);
+                } else {
+                  // If success is false, the code is invalid
+                  const errorMsg = validateResponse.message || 'كود الخصم غير صالح';
+                  return `كود الخصم "${args.discount_code}" غير صالح.\n${errorMsg}\n\nيرجى التحقق من الكود والمحاولة مرة أخرى، أو يمكنك المتابعة بدون كود خصم.`;
+                }
+              } catch (error: any) {
+                logger.error('Error validating discount code:', error);
+                const errorMsg = error.response?.data?.message || error.message || 'حدث خطأ في التحقق من كود الخصم';
+                return `حدث خطأ في التحقق من كود الخصم: ${errorMsg}\n\nيرجى المحاولة مرة أخرى أو المتابعة بدون كود خصم.`;
               }
-            } catch (error: any) {
-              logger.error('Error validating discount code:', error);
-              const errorMsg = error.response?.data?.message || error.message || 'حدث خطأ في التحقق من كود الخصم';
-              return `حدث خطأ في التحقق من كود الخصم: ${errorMsg}\n\nيرجى المحاولة مرة أخرى أو المتابعة بدون كود خصم.`;
             }
-          }
 
-            // Save order data to conversation before creating order
-            const conversation = conversationRepository.getConversation(customerPhone);
-            const currentOrderData = conversation?.orderData || {};
+            // Retrieve conversation data and save order data before creating order
             currentOrderData.items = items;
             currentOrderData.customer_name = args.customer_name;
             currentOrderData.customer_email = customerEmail;
+            currentOrderData.country_code = country_code as any; // Save country code
             currentOrderData.shipping_address = shippingAddress;
             if (discountCode) {
               currentOrderData.discount_code = discountCode;
@@ -1043,15 +1182,17 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               customer_name: args.customer_name,
               customer_phone: customerPhoneNumber, // Use phone number provided by customer
               customer_email: customerEmail,
+              country_code: country_code as any, // Required for shipping calculation
               shipping_address: shippingAddress,
               items: apiItemsForOrder,
               discount_code: discountCode, // Include discount code if validated
-              shipping_amount: shippingAmount,
+              notes: args.notes, // Optional order notes
+              // shipping_amount removed - calculated automatically by API based on country_code
             });
 
             if (orderResponse.success) {
               const orderData = orderResponse.data;
-              
+
               // Clear order data after successful creation
               conversationRepository.saveConversation(
                 customerPhone,
@@ -1059,202 +1200,201 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                 null, // Clear order data after creation
                 conversation?.metadata
               );
-            
-            // Get payment methods
-            const paymentMethodsResponse = await apiService.getPaymentMethods();
-            
-            if (paymentMethodsResponse.success) {
-              const methods = paymentMethodsResponse.data;
-              const firstMethod = Object.values(methods)[0];
-              
-              if (firstMethod) {
-                // Initiate payment
-                const paymentResponse = await apiService.initiatePayment({
-                  order_id: orderData.order.id,
-                  payment_method: firstMethod.PaymentMethodCode,
-                  customer_ip: config.customer.ip,
-                  user_agent: 'WhatsApp-Bot',
-                });
 
-                if (paymentResponse.success) {
-                  // Save order to database
-                  conversationRepository.saveOrder(
-                    orderData.order.id,
-                    customerPhone,
-                    orderData,
-                    paymentResponse.data.payment_url,
-                    'payment_pending'
-                  );
+              // Get payment methods
+              const paymentMethodsResponse = await apiService.getPaymentMethods();
 
-                  // Format order details based on actual API response
-                  const order = orderData.order;
-                  const orderNumber = order.order_number || orderData.tracking_number;
-                  const totalAmount = orderData.total_amount || order.total_amount;
-                  const currency = orderData.currency || order.currency || 'KWD';
-                  const subtotal = orderData.subtotal_amount || order.subtotal_amount || 0;
-                  const shipping = orderData.shipping_amount || order.shipping_amount || 0;
-                  const discount = orderData.discount_amount || order.discount_amount || 0;
-                  const trackingNumber = orderData.tracking_number || order.tracking_number;
-                  const paymentUrl = paymentResponse.data.payment_url;
+              if (paymentMethodsResponse.success) {
+                const methods = paymentMethodsResponse.data;
+                const firstMethod = Object.values(methods)[0];
 
-                  // Format order items from order.order_items array (matching API response structure)
-                  let itemsText = '';
-                  if (order.order_items && Array.isArray(order.order_items) && order.order_items.length > 0) {
-                    itemsText = '\n\nالمنتجات:\n';
-                    order.order_items.forEach((item: any, index: number) => {
-                      // Try multiple sources for product title (product.title, product_snapshot.title)
-                      const productTitle = item.product?.title || 
-                                         item.product_snapshot?.title || 
-                                         `منتج ${item.product_id}`;
-                      const quantity = item.quantity || 1;
-                      
-                      // Get price - use discounted_price if available, otherwise use product_price
-                      let itemPrice: string | number = '0';
-                      if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
-                        itemPrice = item.product.discounted_price;
-                      } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
-                        itemPrice = item.product_snapshot.discounted_price;
-                      } else {
-                        itemPrice = item.product_price || 
-                                   item.product?.price || 
-                                   item.product_snapshot?.price || 
-                                   '0';
-                      }
-                      
-                      // Get original price and discount info if available
-                      const originalPrice = item.product?.price_before_discount || 
-                                          item.product_snapshot?.price_before_discount || 
-                                          null;
-                      const discountPercent = item.product?.discount_percentage || 
-                                            item.product_snapshot?.discount_percentage || 
-                                            null;
-                      const hasDiscount = item.product?.has_discount || 
-                                        item.product_snapshot?.has_discount || 
-                                        false;
-                      
-                      itemsText += `${index + 1}. ${productTitle}\n`;
-                      itemsText += `   الكمية: ${quantity}\n`;
-                      
-                      // Display price with discount information if available
-                      if (hasDiscount && originalPrice && discountPercent) {
-                        itemsText += `   السعر: ${itemPrice} ${currency} (كان ${originalPrice} ${currency}) - خصم ${discountPercent}%\n`;
-                      } else {
-                        itemsText += `   السعر: ${itemPrice} ${currency}\n`;
-                      }
-                      
-                      itemsText += '\n';
-                    });
+                if (firstMethod) {
+                  // Initiate payment
+                  const paymentResponse = await apiService.initiatePayment({
+                    order_id: orderData.order.id,
+                    payment_method: firstMethod.PaymentMethodCode,
+                    customer_ip: config.customer.ip,
+                    user_agent: 'WhatsApp-Bot',
+                  });
+
+                  if (paymentResponse.success) {
+                    // Save order to database
+                    conversationRepository.saveOrder(
+                      orderData.order.id,
+                      customerPhone,
+                      orderData,
+                      paymentResponse.data.payment_url,
+                      'payment_pending'
+                    );
+
+                    // Format order details based on actual API response
+                    const order = orderData.order;
+                    const orderNumber = order.order_number || orderData.order_number;
+                    const totalAmount = orderData.total_amount || order.total_amount;
+                    const currency = orderData.currency || order.currency || 'KWD';
+                    const subtotal = orderData.subtotal_amount || order.subtotal_amount || 0;
+                    const shipping = orderData.shipping_amount || order.shipping_amount || 0;
+                    const discount = orderData.discount_amount || order.discount_amount || 0;
+                    const paymentUrl = paymentResponse.data.payment_url;
+
+                    // Format order items from order.order_items array (matching API response structure)
+                    let itemsText = '';
+                    if (order.order_items && Array.isArray(order.order_items) && order.order_items.length > 0) {
+                      itemsText = '\n\nالمنتجات:\n';
+                      order.order_items.forEach((item: any, index: number) => {
+                        // Try multiple sources for product title (product.title, product_snapshot.title)
+                        const productTitle = item.product?.title ||
+                          item.product_snapshot?.title ||
+                          `منتج ${item.product_id}`;
+                        const quantity = item.quantity || 1;
+
+                        // Get price - use discounted_price if available, otherwise use product_price
+                        let itemPrice: string | number = '0';
+                        if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
+                          itemPrice = item.product.discounted_price;
+                        } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
+                          itemPrice = item.product_snapshot.discounted_price;
+                        } else {
+                          itemPrice = item.product_price ||
+                            item.product?.price ||
+                            item.product_snapshot?.price ||
+                            '0';
+                        }
+
+                        // Get original price and discount info if available
+                        const originalPrice = item.product?.price_before_discount ||
+                          item.product_snapshot?.price_before_discount ||
+                          null;
+                        const discountPercent = item.product?.discount_percentage ||
+                          item.product_snapshot?.discount_percentage ||
+                          null;
+                        const hasDiscount = item.product?.has_discount ||
+                          item.product_snapshot?.has_discount ||
+                          false;
+
+                        itemsText += `${index + 1}. ${productTitle}\n`;
+                        itemsText += `   الكمية: ${quantity}\n`;
+
+                        // Display price with discount information if available
+                        if (hasDiscount && originalPrice && discountPercent) {
+                          itemsText += `   السعر: ${itemPrice} ${currency} (كان ${originalPrice} ${currency}) - خصم ${discountPercent}%\n`;
+                        } else {
+                          itemsText += `   السعر: ${itemPrice} ${currency}\n`;
+                        }
+
+                        itemsText += '\n';
+                      });
+                    }
+
+                    // Build message in plain text format for WhatsApp (no markdown, no special formatting)
+                    // WhatsApp doesn't support markdown well, so use plain text only
+                    let message = `تم إنشاء طلبك بنجاح!\n\n`;
+                    message += `رقم الطلب: ${orderNumber}\n`;
+                    message += `رقم التتبع: ${orderNumber}\n\n`;
+                    message += `تفاصيل الطلب:\n`;
+                    message += `المجموع الفرعي: ${subtotal} ${currency}\n`;
+                    if (discount && parseFloat(String(discount)) > 0) {
+                      message += `الخصم: ${discount} ${currency}\n`;
+                    }
+                    message += `تكلفة الشحن: ${shipping} ${currency}\n`;
+                    message += `المبلغ الإجمالي: ${totalAmount} ${currency}\n`;
+                    message += itemsText;
+                    message += `رابط الدفع:\n${paymentUrl}\n\n`;
+                    message += `يرجى الضغط على الرابط أعلاه لإتمام عملية الدفع.`;
+
+                    return message;
                   }
-
-                  // Build message in plain text format for WhatsApp (no markdown, no special formatting)
-                  // WhatsApp doesn't support markdown well, so use plain text only
-                  let message = `تم إنشاء طلبك بنجاح!\n\n`;
-                  message += `رقم الطلب: ${orderNumber}\n`;
-                  message += `رقم التتبع: ${trackingNumber || orderNumber}\n\n`;
-                  message += `تفاصيل الطلب:\n`;
-                  message += `المجموع الفرعي: ${subtotal} ${currency}\n`;
-                  if (discount && parseFloat(String(discount)) > 0) {
-                    message += `الخصم: ${discount} ${currency}\n`;
-                  }
-                  message += `تكلفة الشحن: ${shipping} ${currency}\n`;
-                  message += `المبلغ الإجمالي: ${totalAmount} ${currency}\n`;
-                  message += itemsText;
-                  message += `رابط الدفع:\n${paymentUrl}\n\n`;
-                  message += `يرجى الضغط على الرابط أعلاه لإتمام عملية الدفع.`;
-
-                  return message;
                 }
               }
+
+              // Save order to database even if payment initiation fails
+              conversationRepository.saveOrder(
+                orderData.order.id,
+                customerPhone,
+                orderData,
+                undefined,
+                'pending'
+              );
+
+              // Format order details even if payment initiation fails
+              const order = orderData.order;
+              const orderNumber = order.order_number || orderData.order_number || 'غير متوفر';
+              const totalAmount = orderData.total_amount || order.total_amount || '0';
+              const currency = orderData.currency || order.currency || 'KWD';
+              const subtotal = orderData.subtotal_amount || order.subtotal_amount || 0;
+              const shipping = orderData.shipping_amount || order.shipping_amount || 0;
+              const discount = orderData.discount_amount || order.discount_amount || 0;
+
+              // Format order items
+              let itemsText = '';
+              if (order.order_items && Array.isArray(order.order_items) && order.order_items.length > 0) {
+                itemsText = '\n\nالمنتجات:\n';
+                order.order_items.forEach((item: any, index: number) => {
+                  const productTitle = item.product?.title ||
+                    item.product_snapshot?.title ||
+                    `منتج ${item.product_id}`;
+                  const quantity = item.quantity || 1;
+
+                  // Get price - use discounted_price if available, otherwise use product_price
+                  let itemPrice: string | number = '0';
+                  if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
+                    itemPrice = item.product.discounted_price;
+                  } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
+                    itemPrice = item.product_snapshot.discounted_price;
+                  } else {
+                    itemPrice = item.product_price ||
+                      item.product?.price ||
+                      item.product_snapshot?.price ||
+                      '0';
+                  }
+
+                  // Get original price and discount info if available
+                  const originalPrice = item.product?.price_before_discount ||
+                    item.product_snapshot?.price_before_discount ||
+                    null;
+                  const discountPercent = item.product?.discount_percentage ||
+                    item.product_snapshot?.discount_percentage ||
+                    null;
+                  const hasDiscount = item.product?.has_discount ||
+                    item.product_snapshot?.has_discount ||
+                    false;
+
+                  itemsText += `${index + 1}. ${productTitle}\n`;
+                  itemsText += `   الكمية: ${quantity}\n`;
+
+                  // Display price with discount information if available
+                  if (hasDiscount && originalPrice && discountPercent) {
+                    itemsText += `   السعر: ${itemPrice} ${currency} (كان ${originalPrice} ${currency}) - خصم ${discountPercent}%\n`;
+                  } else {
+                    itemsText += `   السعر: ${itemPrice} ${currency}\n`;
+                  }
+
+                  itemsText += '\n';
+                });
+              }
+
+              let message = `تم إنشاء طلبك بنجاح!\n\n`;
+              message += `رقم الطلب: ${orderNumber}\n`;
+              message += `تفاصيل الطلب:\n`;
+              message += `المجموع الفرعي: ${subtotal} ${currency}\n`;
+              if (discount && parseFloat(String(discount)) > 0) {
+                message += `الخصم: ${discount} ${currency}\n`;
+              }
+              message += `تكلفة الشحن: ${shipping} ${currency}\n`;
+              message += `المبلغ الإجمالي: ${totalAmount} ${currency}\n`;
+              message += itemsText;
+              message += `سيتم إرسال رابط الدفع قريباً.`;
+
+              return message;
             }
 
-            // Save order to database even if payment initiation fails
-            conversationRepository.saveOrder(
-              orderData.order.id,
-              customerPhone,
-              orderData,
-              undefined,
-              'pending'
-            );
-
-            // Format order details even if payment initiation fails
-            const order = orderData.order;
-            const orderNumber = order.order_number || orderData.tracking_number || 'غير متوفر';
-            const totalAmount = orderData.total_amount || order.total_amount || '0';
-            const currency = orderData.currency || order.currency || 'KWD';
-            const subtotal = orderData.subtotal_amount || order.subtotal_amount || 0;
-            const shipping = orderData.shipping_amount || order.shipping_amount || 0;
-            const discount = orderData.discount_amount || order.discount_amount || 0;
-
-            // Format order items
-            let itemsText = '';
-            if (order.order_items && Array.isArray(order.order_items) && order.order_items.length > 0) {
-              itemsText = '\n\nالمنتجات:\n';
-              order.order_items.forEach((item: any, index: number) => {
-                const productTitle = item.product?.title || 
-                                   item.product_snapshot?.title || 
-                                   `منتج ${item.product_id}`;
-                const quantity = item.quantity || 1;
-                
-                // Get price - use discounted_price if available, otherwise use product_price
-                let itemPrice: string | number = '0';
-                if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
-                  itemPrice = item.product.discounted_price;
-                } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
-                  itemPrice = item.product_snapshot.discounted_price;
-                } else {
-                  itemPrice = item.product_price || 
-                             item.product?.price || 
-                             item.product_snapshot?.price || 
-                             '0';
-                }
-                
-                // Get original price and discount info if available
-                const originalPrice = item.product?.price_before_discount || 
-                                    item.product_snapshot?.price_before_discount || 
-                                    null;
-                const discountPercent = item.product?.discount_percentage || 
-                                      item.product_snapshot?.discount_percentage || 
-                                      null;
-                const hasDiscount = item.product?.has_discount || 
-                                  item.product_snapshot?.has_discount || 
-                                  false;
-                
-                itemsText += `${index + 1}. ${productTitle}\n`;
-                itemsText += `   الكمية: ${quantity}\n`;
-                
-                // Display price with discount information if available
-                if (hasDiscount && originalPrice && discountPercent) {
-                  itemsText += `   السعر: ${itemPrice} ${currency} (كان ${originalPrice} ${currency}) - خصم ${discountPercent}%\n`;
-                } else {
-                  itemsText += `   السعر: ${itemPrice} ${currency}\n`;
-                }
-                
-                itemsText += '\n';
-              });
+            // Handle API error response
+            const errorMsg = orderResponse.message || 'حدث خطأ في إنشاء الطلب';
+            if (orderResponse.errors) {
+              const errorDetails = Object.values(orderResponse.errors).flat().join(', ');
+              return `حدث خطأ في إنشاء الطلب: ${errorMsg}\n${errorDetails}`;
             }
-
-            let message = `تم إنشاء طلبك بنجاح!\n\n`;
-            message += `رقم الطلب: ${orderNumber}\n`;
-            message += `تفاصيل الطلب:\n`;
-            message += `المجموع الفرعي: ${subtotal} ${currency}\n`;
-            if (discount && parseFloat(String(discount)) > 0) {
-              message += `الخصم: ${discount} ${currency}\n`;
-            }
-            message += `تكلفة الشحن: ${shipping} ${currency}\n`;
-            message += `المبلغ الإجمالي: ${totalAmount} ${currency}\n`;
-            message += itemsText;
-            message += `سيتم إرسال رابط الدفع قريباً.`;
-
-            return message;
-          }
-          
-          // Handle API error response
-          const errorMsg = orderResponse.message || 'حدث خطأ في إنشاء الطلب';
-          if (orderResponse.errors) {
-            const errorDetails = Object.values(orderResponse.errors).flat().join(', ');
-            return `حدث خطأ في إنشاء الطلب: ${errorMsg}\n${errorDetails}`;
-          }
-          return `حدث خطأ في إنشاء الطلب: ${errorMsg}`;
+            return `حدث خطأ في إنشاء الطلب: ${errorMsg}`;
           } catch (error: any) {
             logger.error('Error creating order:', error);
             return `حدث خطأ في إنشاء الطلب: ${error.message || 'خطأ غير معروف'}. يرجى المحاولة مرة أخرى.`;
@@ -1277,7 +1417,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               // Format order tracking information (plain text, no markdown)
               let message = `معلومات متابعة الطلب:\n\n`;
               message += `رقم الطلب: ${order.order_number}\n`;
-              message += `رقم التتبع: ${order.tracking_number}\n`;
+              message += `رقم التتبع: ${order.order_number}\n`;
               message += `الحالة الحالية: ${status_info.title}\n`;
               message += `${status_info.description}\n\n`;
 
@@ -1310,7 +1450,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               message += `المبلغ الإجمالي: ${order.total_amount} ${order.currency}\n`;
               message += `المجموع الفرعي: ${order.subtotal_amount} ${order.currency}\n`;
               message += `تكلفة الشحن: ${order.shipping_amount} ${order.currency}\n`;
-              
+
               if (order.discount_amount && parseFloat(order.discount_amount) > 0) {
                 message += `الخصم: ${order.discount_amount} ${order.currency}\n`;
               }
@@ -1319,11 +1459,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               if (order.order_items && order.order_items.length > 0) {
                 message += `\nالمنتجات:\n`;
                 order.order_items.forEach((item: any, index: number) => {
-                  const productTitle = item.product?.title || 
-                                     item.product_snapshot?.title || 
-                                     `منتج ${item.product_id}`;
+                  const productTitle = item.product?.title ||
+                    item.product_snapshot?.title ||
+                    `منتج ${item.product_id}`;
                   const quantity = item.quantity || 1;
-                  
+
                   // Get price - use discounted_price if available, otherwise use product_price
                   let itemPrice: string | number = '0';
                   if (item.product?.has_discount && item.product?.discounted_price !== undefined) {
@@ -1331,33 +1471,33 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                   } else if (item.product_snapshot?.has_discount && item.product_snapshot?.discounted_price !== undefined) {
                     itemPrice = item.product_snapshot.discounted_price;
                   } else {
-                    itemPrice = item.product_price || 
-                               item.product?.price || 
-                               item.product_snapshot?.price || 
-                               '0';
+                    itemPrice = item.product_price ||
+                      item.product?.price ||
+                      item.product_snapshot?.price ||
+                      '0';
                   }
-                  
+
                   // Get original price and discount info if available
-                  const originalPrice = item.product?.price_before_discount || 
-                                      item.product_snapshot?.price_before_discount || 
-                                      null;
-                  const discountPercent = item.product?.discount_percentage || 
-                                        item.product_snapshot?.discount_percentage || 
-                                        null;
-                  const hasDiscount = item.product?.has_discount || 
-                                    item.product_snapshot?.has_discount || 
-                                    false;
-                  
+                  const originalPrice = item.product?.price_before_discount ||
+                    item.product_snapshot?.price_before_discount ||
+                    null;
+                  const discountPercent = item.product?.discount_percentage ||
+                    item.product_snapshot?.discount_percentage ||
+                    null;
+                  const hasDiscount = item.product?.has_discount ||
+                    item.product_snapshot?.has_discount ||
+                    false;
+
                   message += `${index + 1}. ${productTitle}\n`;
                   message += `   الكمية: ${quantity}\n`;
-                  
+
                   // Display price with discount information if available
                   if (hasDiscount && originalPrice && discountPercent) {
                     message += `   السعر: ${itemPrice} ${order.currency} (كان ${originalPrice} ${order.currency}) - خصم ${discountPercent}%\n`;
                   } else {
                     message += `   السعر: ${itemPrice} ${order.currency}\n`;
                   }
-                  
+
                   message += '\n';
                 });
               }
@@ -1426,14 +1566,14 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           try {
             // Import blockedNumbersService dynamically to avoid circular dependency
             const { blockedNumbersService } = await import('../services/BlockedNumbersService');
-            
+
             const phone = args.phone;
             const reason = args.reason || 'حظر من قبل البوت';
-            
+
             // Only allow blocking if the request comes from an admin or if it's clearly spam
             // For security, we'll only allow blocking through the function if there's a clear reason
             blockedNumbersService.blockNumber(phone, reason, 'bot');
-            
+
             logger.info(`Number ${phone} blocked by bot, reason: ${reason}`);
             return `تم حظر الرقم ${phone} بنجاح.\nالسبب: ${reason}`;
           } catch (error: any) {
@@ -1446,10 +1586,10 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           try {
             // Import blockedNumbersService dynamically to avoid circular dependency
             const { blockedNumbersService } = await import('../services/BlockedNumbersService');
-            
+
             const phone = args.phone;
             blockedNumbersService.unblockNumber(phone);
-            
+
             logger.info(`Number ${phone} unblocked by bot`);
             return `تم إلغاء حظر الرقم ${phone} بنجاح.`;
           } catch (error: any) {
@@ -1469,13 +1609,13 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
             // Import blockedNumbersService dynamically to avoid circular dependency
             const { blockedNumbersService } = await import('../services/BlockedNumbersService');
-            
+
             const blockedNumbers = blockedNumbersService.getAllBlockedNumbers();
-            
+
             if (blockedNumbers.length === 0) {
               return 'لا توجد أرقام محظورة حالياً.';
             }
-            
+
             let message = `قائمة الأرقام المحظورة (${blockedNumbers.length}):\n\n`;
             blockedNumbers.forEach((blocked, index) => {
               message += `${index + 1}. ${blocked.phone}\n`;
@@ -1485,7 +1625,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               message += `   تم الحظر بواسطة: ${blocked.blocked_by}\n`;
               message += `   تاريخ الحظر: ${new Date(blocked.created_at).toLocaleDateString('ar-KW')}\n\n`;
             });
-            
+
             return message;
           } catch (error: any) {
             logger.error('Error listing blocked numbers:', error);
@@ -1504,7 +1644,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
             const { adminPromptService } = await import('../services/AdminPromptService');
             const promptText = args.prompt_text || args.instruction || args.text;
-            
+
             if (!promptText || promptText.trim().length === 0) {
               return 'يرجى تقديم نص التعليمات الإضافية.';
             }
@@ -1534,7 +1674,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
             const { adminPromptService } = await import('../services/AdminPromptService');
             const promptData = adminPromptService.getAdminPromptWithMetadata();
-            
+
             if (!promptData || !promptData.prompt_text) {
               return 'لا توجد تعليمات إضافية حالياً.';
             }
@@ -1542,7 +1682,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             let message = `التعليمات الإضافية الحالية:\n\n${promptData.prompt_text}\n\n`;
             message += `تمت الإضافة بواسطة: ${promptData.added_by}\n`;
             message += `تاريخ آخر تحديث: ${new Date(promptData.updated_at).toLocaleDateString('ar-KW')} ${new Date(promptData.updated_at).toLocaleTimeString('ar-KW')}`;
-            
+
             return message;
           } catch (error: any) {
             logger.error('Error getting admin prompt:', error);
@@ -1561,7 +1701,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
             const { adminPromptService } = await import('../services/AdminPromptService');
             adminPromptService.clearAdminPrompt();
-            
+
             return 'تم حذف التعليمات الإضافية بنجاح.';
           } catch (error: any) {
             logger.error('Error clearing admin prompt:', error);
@@ -1636,16 +1776,16 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       // IMPORTANT: First message in history must be 'user', not 'model'
       // History must be pairs: user -> model -> user -> model
       const recentHistory = conversationHistory.slice(-10); // Limit to last 10 messages
-      
+
       // Remove the current user message from history since we'll send it separately
       const historyWithoutCurrent = recentHistory.filter((msg, idx) => {
         // Remove last user message if it matches current userMessage
         return !(idx === recentHistory.length - 1 && msg.role === 'user' && msg.content === userMessage);
       });
-      
+
       // Build valid history that starts with 'user' and alternates properly
       const history: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
-      
+
       // Find first user message to start history
       let startIdx = 0;
       for (let i = 0; i < historyWithoutCurrent.length; i++) {
@@ -1654,23 +1794,23 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           break;
         }
       }
-      
+
       // Build history from first user message, ensuring proper alternation
       let lastRole: 'user' | 'model' | null = null;
       for (let i = startIdx; i < historyWithoutCurrent.length; i++) {
         const msg = historyWithoutCurrent[i];
         const role = (msg.role === 'user' ? 'user' : 'model') as 'user' | 'model';
-        
+
         // Skip if this would create invalid alternation (same role twice in a row)
         if (lastRole === role) {
           continue;
         }
-        
+
         history.push({
           role: role,
           parts: [{ text: msg.content }],
         });
-        
+
         lastRole = role;
       }
 
@@ -1699,12 +1839,12 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       // - Starts with 'user' role
       // - Has at least 2 messages (user -> model pair)
       // - Ends with 'model' role (so next message can be 'user')
-      const validHistory = history.length >= 2 && 
-                          history[0].role === 'user' && 
-                          history[history.length - 1].role === 'model'
-        ? history 
+      const validHistory = history.length >= 2 &&
+        history[0].role === 'user' &&
+        history[history.length - 1].role === 'model'
+        ? history
         : undefined;
-      
+
       const chat = model.startChat({
         history: validHistory,
       });
@@ -1716,7 +1856,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       // Check if function call was made (gemini-2.5-pro function calling)
       // Try multiple ways to get function calls
       let functionCalls: any[] = [];
-      
+
       try {
         // Method 1: response.functionCalls() if available
         if (typeof response.functionCalls === 'function') {
@@ -1728,7 +1868,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       } catch (e) {
         // Ignore
       }
-      
+
       // Method 2: Check response.candidates for function calls
       if (functionCalls.length === 0) {
         try {
@@ -1741,7 +1881,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           // Ignore
         }
       }
-      
+
       // Method 3: Check if response contains code blocks that look like function calls
       // This is a fallback if Gemini tries to write code instead of using function calling
       if (functionCalls.length === 0) {
@@ -1752,10 +1892,10 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           // Don't try to parse - let it fail and user will see the issue
         }
       }
-      
+
       if (functionCalls && functionCalls.length > 0) {
         logger.info(`Function calls detected: ${functionCalls.length}`);
-        
+
         // Execute function calls
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
@@ -1783,11 +1923,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           // The response should be a plain JSON object that can be serialized
           const functionResponseParts = functionResults.map((fr: any) => {
             const response = fr.functionResponse.response;
-            
+
             // Convert string response to object
             // Gemini API requires function response to be a Struct (JSON-serializable object)
             let responseObject: Record<string, any>;
-            
+
             if (typeof response === 'string') {
               // For string responses, wrap in an object with a text field
               // This is the standard way to return text results from functions
@@ -1804,7 +1944,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                 result: response,
               };
             }
-            
+
             return {
               functionResponse: {
                 name: fr.functionResponse.name,
@@ -1833,7 +1973,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               return typeof response === 'string' ? response : JSON.stringify(response);
             })
             .join('\n\n');
-          
+
           return {
             text: functionResultText,
             functionCall: {
@@ -1846,7 +1986,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
       // Get response text
       const responseText = response.text();
-      
+
       // CRITICAL SECURITY CHECK: Detect fake order creation
       // Check if response claims to have created an order without actually calling create_order
       const fakeOrderPatterns = [
@@ -1856,10 +1996,10 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         /رقم الطلب.*\d+/i,
         /order.*number.*\d+/i,
       ];
-      
+
       const hasFakeOrder = fakeOrderPatterns.some(pattern => pattern.test(responseText));
       const hasCreateOrderCall = functionCalls && functionCalls.some((fc: any) => fc.name === 'create_order');
-      
+
       if (hasFakeOrder && !hasCreateOrderCall) {
         logger.error('CRITICAL SECURITY: Detected fake order creation attempt!', {
           responseText: responseText.substring(0, 200),
@@ -1869,26 +2009,26 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           text: 'عذراً، حدث خطأ. لا يمكنني إنشاء الطلب بدون استخدام النظام. يرجى المحاولة مرة أخرى أو الاتصال بالدعم.',
         };
       }
-      
+
       // Check if response contains code blocks (indicating Gemini tried to write code instead of function calling)
       // This is a critical error - Gemini should use Function Calling, not write code
-      if (responseText.includes('{{tool_code}}') || 
-          responseText.includes('print(') || 
-          responseText.includes('def ') ||
-          responseText.includes('function ') ||
-          responseText.includes('```python') ||
-          responseText.includes('```javascript') ||
-          (responseText.includes('create_order(') && responseText.includes('customer_name=') && !responseText.includes('functionResponse'))) {
+      if (responseText.includes('{{tool_code}}') ||
+        responseText.includes('print(') ||
+        responseText.includes('def ') ||
+        responseText.includes('function ') ||
+        responseText.includes('```python') ||
+        responseText.includes('```javascript') ||
+        (responseText.includes('create_order(') && responseText.includes('customer_name=') && !responseText.includes('functionResponse'))) {
         logger.error('CRITICAL ERROR: Gemini wrote code instead of using Function Calling!');
         logger.error('Response contains code. First 500 chars:', responseText.substring(0, 500));
         logger.error('This should not happen - Gemini should use Function Calling API, not write code');
-        
+
         // Return error message to user
         return {
           text: 'عذراً، حدث خطأ فني في معالجة طلبك. يرجى المحاولة مرة أخرى. إذا استمرت المشكلة، يرجى التواصل مع الدعم الفني.',
         };
       }
-      
+
       return {
         text: responseText,
       };
@@ -1899,7 +2039,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         message: error.message,
         errorDetails: error.errorDetails,
       });
-      
+
       // If it's a 404 error, the model might not be available or API key doesn't have access
       if (error.status === 404 || error.message?.includes('404') || error.statusText === 'Not Found') {
         logger.error('API endpoint returned 404. Possible reasons:');
@@ -1907,11 +2047,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         logger.error('2. API key does not have access to gemini-2.5-pro');
         logger.error('3. API endpoint has changed');
         logger.error('Falling back to simple generation without function calling...');
-        
+
         // Fallback: use simple generateContent without function calling
         return this.generateResponse(userMessage, conversationHistory, customerPhone);
       }
-      
+
       // Fallback to simple generation
       return this.generateResponse(userMessage, conversationHistory, customerPhone);
     }
