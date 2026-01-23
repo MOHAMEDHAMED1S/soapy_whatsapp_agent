@@ -362,7 +362,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/checkout/create-order \
 ## 📊 Response Flow
 
 ```
-Frontend Request
+Request
     ↓
 Validate Request
     ↓

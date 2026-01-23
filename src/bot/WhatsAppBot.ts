@@ -7,6 +7,14 @@ export class WhatsAppBot {
   private client: Client;
   private isReady: boolean = false;
 
+  // Reconnection properties
+  private isReconnecting: boolean = false;
+  private reconnectAttempts: number = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private readonly RECONNECT_BASE_DELAY = 5000; // 5 seconds
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private readonly HEALTH_CHECK_INTERVAL = 60000; // 1 minute
+
   constructor() {
     this.client = new Client({
       authStrategy: new LocalAuth({
@@ -62,10 +70,16 @@ export class WhatsAppBot {
       logger.error('Authentication failure:', msg);
     });
 
-    // Disconnected event
-    this.client.on('disconnected', (reason) => {
+    // Disconnected event - trigger auto-reconnect
+    this.client.on('disconnected', async (reason) => {
       this.isReady = false;
       logger.warn('WhatsApp client disconnected:', reason);
+
+      // Stop health check during reconnection
+      this.stopHealthCheck();
+
+      // Trigger auto-reconnect
+      await this.reconnect();
     });
 
     // Message event
@@ -108,6 +122,9 @@ export class WhatsAppBot {
       logger.info('Initializing WhatsApp bot...');
       logger.info('Please wait while connecting to WhatsApp Web...');
       await this.client.initialize();
+
+      // Start health check after successful initialization
+      this.startHealthCheck();
     } catch (error: any) {
       if (error.name === 'TimeoutError') {
         logger.error('Timeout while initializing WhatsApp bot. This may happen if:');
@@ -122,6 +139,96 @@ export class WhatsAppBot {
     }
   }
 
+  // Auto-reconnect with exponential backoff
+  private async reconnect(): Promise<void> {
+    if (this.isReconnecting) {
+      logger.info('Already attempting to reconnect...');
+      return;
+    }
+
+    this.isReconnecting = true;
+    this.isReady = false;
+
+    while (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+      try {
+        const delay = this.RECONNECT_BASE_DELAY * Math.pow(2, this.reconnectAttempts);
+        logger.info(`Attempting to reconnect in ${delay / 1000}s... (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})`);
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        // Destroy old client and create new one
+        try {
+          await this.client.destroy();
+        } catch (destroyError) {
+          logger.warn('Error destroying client during reconnect:', destroyError);
+        }
+
+        // Reinitialize
+        await this.client.initialize();
+
+        // Success!
+        this.reconnectAttempts = 0;
+        this.isReconnecting = false;
+        this.startHealthCheck();
+        logger.info('Successfully reconnected to WhatsApp!');
+        return;
+      } catch (error: any) {
+        this.reconnectAttempts++;
+        logger.error(`Reconnection attempt ${this.reconnectAttempts} failed:`, error.message || error);
+      }
+    }
+
+    // All attempts failed
+    logger.error(`Max reconnection attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached. Please restart the bot manually.`);
+    this.isReconnecting = false;
+  }
+
+  // Start periodic health check
+  private startHealthCheck(): void {
+    this.stopHealthCheck(); // Clear any existing interval
+
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        if (!this.isReady || this.isReconnecting) return;
+
+        // Try to get state - if this fails, client may be disconnected
+        const state = await this.client.getState();
+        if (!state) {
+          logger.warn('Health check: No state returned, client may be disconnected');
+          await this.reconnect();
+        }
+      } catch (error: any) {
+        logger.error('Health check failed:', error.message);
+
+        // Check if it's a detached frame error
+        if (this.isDetachedFrameError(error)) {
+          logger.warn('Detached frame detected, triggering reconnection...');
+          await this.reconnect();
+        }
+      }
+    }, this.HEALTH_CHECK_INTERVAL);
+
+    logger.debug('Health check started');
+  }
+
+  // Stop health check
+  private stopHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+      logger.debug('Health check stopped');
+    }
+  }
+
+  // Check if error is a detached frame error
+  private isDetachedFrameError(error: any): boolean {
+    const errorMessage = error?.message || error?.toString() || '';
+    return errorMessage.includes('detached Frame') ||
+      errorMessage.includes('markedUnread') ||
+      errorMessage.includes('Execution context was destroyed');
+  }
+
+
   private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
 
   // Send typing indicator and keep it alive
@@ -134,7 +241,7 @@ export class WhatsAppBot {
 
       // Normalize phone number - remove any existing suffix
       const normalizedPhone = phone.split('@')[0];
-      
+
       // Try multiple chat ID formats
       const chatIdFormats = [
         `${normalizedPhone}@c.us`,  // Standard format
@@ -142,7 +249,7 @@ export class WhatsAppBot {
       ];
 
       let chatId: string | null = null;
-      
+
       // Find working chat ID format
       for (const format of chatIdFormats) {
         try {
@@ -159,10 +266,10 @@ export class WhatsAppBot {
         logger.debug(`Could not find chat for ${normalizedPhone} - skipping typing indicator`);
         return; // Don't throw - typing indicator is optional
       }
-      
+
       try {
         const chat = await this.client.getChatById(chatId);
-        
+
         // Send initial typing indicator
         await chat.sendStateTyping();
         logger.debug(`Typing indicator sent to ${normalizedPhone} using ${chatId}`);
@@ -236,7 +343,7 @@ export class WhatsAppBot {
           continue;
         }
       }
-      
+
       // If all formats failed, it's okay - clearing state is optional
       logger.debug(`Could not clear typing state for ${normalizedPhone} (this is normal)`);
     } catch (error) {
@@ -245,17 +352,25 @@ export class WhatsAppBot {
     }
   }
 
-  // Send message
-  async sendMessage(phone: string, message: string): Promise<Message> {
+  // Send message with retry logic
+  async sendMessage(phone: string, message: string, retryCount: number = 0): Promise<Message> {
+    const MAX_RETRIES = 2;
+
     try {
       if (!this.isReady) {
+        // If not ready but reconnecting, wait a bit
+        if (this.isReconnecting && retryCount < MAX_RETRIES) {
+          logger.info(`Client not ready, waiting for reconnection... (attempt ${retryCount + 1})`);
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          return this.sendMessage(phone, message, retryCount + 1);
+        }
         logger.error(`Cannot send message - WhatsApp client not ready`);
         throw new Error('WhatsApp client is not ready');
       }
 
       // Normalize phone number - remove any existing suffix
       const normalizedPhone = phone.split('@')[0];
-      
+
       // Try multiple chat ID formats
       const chatIdFormats = [
         `${normalizedPhone}@c.us`,  // Standard format
@@ -263,31 +378,47 @@ export class WhatsAppBot {
       ];
 
       let lastError: any = null;
-      
+
       for (const chatId of chatIdFormats) {
         try {
           // First, try to get the chat to check if it exists
           await this.client.getChatById(chatId);
-          
+
           // If chat exists, try to send message
           const sentMessage = await this.client.sendMessage(chatId, message);
           logger.debug(`Message sent to ${normalizedPhone} using ${chatId}`);
           return sentMessage;
         } catch (error: any) {
+          // Check if it's a detached frame or similar critical error
+          if (this.isDetachedFrameError(error)) {
+            logger.warn(`Detached frame error detected while sending message, attempting reconnection...`);
+
+            // Trigger reconnection
+            this.reconnect().catch(e => logger.error('Reconnection failed:', e));
+
+            // If we have retries left, wait and retry
+            if (retryCount < MAX_RETRIES) {
+              await new Promise(resolve => setTimeout(resolve, 10000));
+              return this.sendMessage(phone, message, retryCount + 1);
+            }
+
+            throw new Error('Message failed due to connection issues. Please try again.');
+          }
+
           // Check if error is "No LID for user" - try next format
           if (error.message && error.message.includes('No LID for user')) {
             logger.debug(`No LID for ${normalizedPhone}, trying next format...`);
             lastError = error;
             continue; // Try next format
           }
-          
+
           // If it's a different error, log and try next format
           if (chatIdFormats.indexOf(chatId) < chatIdFormats.length - 1) {
             logger.debug(`Error with ${chatId}, trying next format:`, error.message);
             lastError = error;
             continue;
           }
-          
+
           // Last format failed, throw error
           logger.error(`Error sending message to ${normalizedPhone} with ${chatId}:`, {
             error: error.message,
@@ -297,7 +428,7 @@ export class WhatsAppBot {
           throw error;
         }
       }
-      
+
       // All formats failed
       logger.error(`Failed to send message to ${normalizedPhone} with all formats`);
       throw lastError || new Error(`Failed to send message to ${normalizedPhone}`);
@@ -320,6 +451,9 @@ export class WhatsAppBot {
   // Destroy the bot
   async destroy(): Promise<void> {
     try {
+      // Stop health check
+      this.stopHealthCheck();
+
       // Clear all typing intervals
       this.typingIntervals.forEach((interval, phone) => {
         clearInterval(interval);
@@ -331,6 +465,8 @@ export class WhatsAppBot {
 
       await this.client.destroy();
       this.isReady = false;
+      this.isReconnecting = false;
+      this.reconnectAttempts = 0;
       logger.info('WhatsApp bot destroyed');
     } catch (error) {
       logger.error('Error destroying WhatsApp bot:', error);
