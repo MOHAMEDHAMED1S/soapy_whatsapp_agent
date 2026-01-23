@@ -21,6 +21,7 @@ export class MessageHandler {
   async handleMessage(msg: Message): Promise<void> {
     try {
       const phone = this.extractPhoneNumber(msg.from);
+      const chatId = msg.from; // Keep original chat ID for replying
       const userMessage = msg.body.trim();
 
       logger.info(`Message from ${phone}: ${userMessage.substring(0, 50)}...`);
@@ -40,13 +41,13 @@ export class MessageHandler {
       const rateLimitCheck = await rateLimiterService.checkRateLimit(phone);
       if (!rateLimitCheck.allowed) {
         logger.warn(`Rate limit exceeded for ${phone}: ${rateLimitCheck.reason}`);
-        
+
         // Check if number was auto-blocked
         if (blockedNumbersService.isBlocked(phone)) {
           logger.info(`Number ${phone} was auto-blocked due to spam`);
           return; // Silently ignore
         }
-        
+
         // Send rate limit message (only once to avoid spam)
         // We'll send a warning message, but not process the request
         await whatsappBot.sendMessage(phone, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.');
@@ -66,7 +67,7 @@ export class MessageHandler {
       }
 
       // Process message (one at a time per phone number)
-      const processPromise = this.processMessage(phone, userMessage);
+      const processPromise = this.processMessage(phone, userMessage, chatId);
       this.processingQueue.set(phone, processPromise);
 
       try {
@@ -81,7 +82,9 @@ export class MessageHandler {
   }
 
   // Process a single message
-  private async processMessage(phone: string, userMessage: string): Promise<void> {
+  private async processMessage(phone: string, userMessage: string, chatId?: string): Promise<void> {
+    // Default to phone if chatId not provided (backward compatibility)
+    const replyTo = chatId || phone;
     try {
       // Double-check block status (in case it was blocked while in queue)
       if (blockedNumbersService.isBlocked(phone)) {
@@ -93,11 +96,11 @@ export class MessageHandler {
       conversationManager.addMessage(phone, 'user', userMessage);
 
       // Send typing indicator
-      await whatsappBot.sendTypingIndicator(phone);
+      await whatsappBot.sendTypingIndicator(replyTo);
 
       // Get conversation history
       const conversationHistory = conversationManager.getFullConversationHistory(phone);
-      
+
       // Get current order data from conversation
       const conversation = conversationManager.getConversationContext(phone);
       const currentOrderData = conversation?.orderData || null;
@@ -112,10 +115,10 @@ export class MessageHandler {
         );
 
         // Clear typing indicator before sending message
-        await whatsappBot.clearTypingIndicator(phone);
+        await whatsappBot.clearTypingIndicator(replyTo);
 
         // Send response to user
-        await whatsappBot.sendMessage(phone, response.text);
+        await whatsappBot.sendMessage(replyTo, response.text);
 
         // Add assistant message to conversation
         conversationManager.addMessage(phone, 'assistant', response.text);
@@ -128,14 +131,14 @@ export class MessageHandler {
         }
       } catch (error: any) {
         logger.error('Error generating response:', error);
-        
+
         // Clear typing indicator in case of error
-        await whatsappBot.clearTypingIndicator(phone);
-        
+        await whatsappBot.clearTypingIndicator(replyTo);
+
         // Send error message to user (only if not blocked)
         if (!blockedNumbersService.isBlocked(phone)) {
           const errorMessage = 'عذراً، حدث خطأ في معالجة رسالتك. يرجى المحاولة مرة أخرى.';
-          await whatsappBot.sendMessage(phone, errorMessage);
+          await whatsappBot.sendMessage(replyTo, errorMessage);
           conversationManager.addMessage(phone, 'assistant', errorMessage);
         }
       }
@@ -158,7 +161,7 @@ export class MessageHandler {
       // - Sending confirmation emails
       // - Updating analytics
       // - Notifying administrators
-      
+
       // For now, we'll just log that the order was created
       // The actual order data and payment URL are already sent to the user by GeminiService
     } catch (error) {

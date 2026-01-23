@@ -144,6 +144,7 @@ export interface CreateOrderRequest {
   items: CartItem[];
   discount_code?: string;
   notes?: string; // Optional order notes
+  from_whatsapp?: boolean; // Flag to indicate order source
   // shipping_amount removed - calculated automatically by API
 }
 

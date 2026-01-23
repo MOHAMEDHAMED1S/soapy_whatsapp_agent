@@ -94,8 +94,11 @@ export class ApiService {
       const apiData = response.data.data;
 
       if (response.data.success && apiData && Array.isArray(apiData.data)) {
-        // Map products using our mapper
-        const mappedProducts = apiData.data.map((p: any) => this.mapApiProductToProduct(p));
+        // Map products using our mapper and filter out of stock items
+        const mappedProducts = apiData.data
+          .map((p: any) => this.mapApiProductToProduct(p))
+          // Filter: Must be in stock AND (if quantity is provided) quantity > 0
+          .filter((p: Product) => p.is_in_stock !== false && (p.stock_quantity === undefined || p.stock_quantity > 0));
 
         // Create ProductsResponse structure
         const productsResponse: ProductsResponse = {
@@ -356,9 +359,15 @@ export class ApiService {
   // Create order
   async createOrder(request: CreateOrderRequest): Promise<ApiResponse<CreateOrderResponse>> {
     try {
+      // Automatically add from_whatsapp flag
+      const orderPayload = {
+        ...request,
+        from_whatsapp: true
+      };
+
       const response = await this.client.post<ApiResponse<CreateOrderResponse>>(
         '/checkout/create-order',
-        request
+        orderPayload
       );
       return response.data;
     } catch (error: any) {

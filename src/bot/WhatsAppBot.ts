@@ -41,7 +41,9 @@ export class WhatsAppBot {
           '--disable-ipc-flooding-protection',
         ],
         timeout: 60000, // 60 seconds timeout for VPS
+        ignoreHTTPSErrors: true,
       },
+      restartOnAuthFail: true,
     });
 
     this.setupEventHandlers();
@@ -97,7 +99,7 @@ export class WhatsAppBot {
         }
 
         // Log message source for debugging
-        logger.debug(`Message from: ${msg.from}, type: ${typeof msg.from}`);
+        logger.info(`Message from: ${msg.from}, type: ${typeof msg.from}`);
 
         // Process message
         await messageHandler.handleMessage(msg);
@@ -111,7 +113,7 @@ export class WhatsAppBot {
       // This event fires for all messages, including sent ones
       // We can use it for logging or other purposes
       if (msg.fromMe) {
-        logger.debug(`Message sent to ${msg.to}: ${msg.body.substring(0, 50)}...`);
+        logger.info(`Message sent to ${msg.to}: ${msg.body.substring(0, 50)}...`);
       }
     });
   }
@@ -200,15 +202,15 @@ export class WhatsAppBot {
       } catch (error: any) {
         logger.error('Health check failed:', error.message);
 
-        // Check if it's a detached frame error
-        if (this.isDetachedFrameError(error)) {
-          logger.warn('Detached frame detected, triggering reconnection...');
+        // Check if it's a critical puppeteer error
+        if (this.isCriticalPuppeteerError(error)) {
+          logger.warn('Critical Puppeteer error detected, triggering reconnection...');
           await this.reconnect();
         }
       }
     }, this.HEALTH_CHECK_INTERVAL);
 
-    logger.debug('Health check started');
+    logger.info('Health check started');
   }
 
   // Stop health check
@@ -216,16 +218,26 @@ export class WhatsAppBot {
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
       this.healthCheckInterval = null;
-      logger.debug('Health check stopped');
+      logger.info('Health check stopped');
     }
   }
 
-  // Check if error is a detached frame error
-  private isDetachedFrameError(error: any): boolean {
+  // Check if error is a critical Puppeteer/DOM error
+  private isCriticalPuppeteerError(error: any): boolean {
     const errorMessage = error?.message || error?.toString() || '';
-    return errorMessage.includes('detached Frame') ||
-      errorMessage.includes('markedUnread') ||
-      errorMessage.includes('Execution context was destroyed');
+    const msg = errorMessage.toLowerCase();
+
+    return msg.includes('detached frame') ||
+      msg.includes('markedunread') ||
+      msg.includes('execution context was destroyed') ||
+      msg.includes('target closed') ||
+      msg.includes('session closed') ||
+      msg.includes('protocol error') ||
+      msg.includes('browser has been closed') ||
+      msg.includes('navigation failed') ||
+      msg.includes('evaluation failed') ||
+      msg.includes('page crashed') ||
+      msg.includes('context mismatch');
   }
 
 
@@ -239,31 +251,44 @@ export class WhatsAppBot {
         return;
       }
 
-      // Normalize phone number - remove any existing suffix
+      let chatId: string | null = null;
       const normalizedPhone = phone.split('@')[0];
 
-      // Try multiple chat ID formats
-      const chatIdFormats = [
-        `${normalizedPhone}@c.us`,  // Standard format
-        `${normalizedPhone}@lid`,   // LID format (for business accounts)
-      ];
-
-      let chatId: string | null = null;
-
-      // Find working chat ID format
-      for (const format of chatIdFormats) {
+      if (phone.includes('@')) {
+        // If phone contains @, assume it's a full chat ID and try it first
         try {
-          await this.client.getChatById(format);
-          chatId = format;
-          break; // Found working format
+          // Check if chat exists
+          // Note: getChatById usually expects a serialized ID. If it's passed directly, it should work.
+          await this.client.getChatById(phone);
+          chatId = phone;
         } catch (error) {
-          // Try next format
-          continue;
+          logger.warn(`Provided chat ID ${phone} failed to retrieve chat, falling back to heuristics`);
+          // Fallback to heuristics below if specific ID fails
         }
       }
 
       if (!chatId) {
-        logger.debug(`Could not find chat for ${normalizedPhone} - skipping typing indicator`);
+        // Try multiple chat ID formats approach
+        const chatIdFormats = [
+          `${normalizedPhone}@c.us`,  // Standard format
+          `${normalizedPhone}@lid`,   // LID format (for business accounts)
+        ];
+
+        // Find working chat ID format
+        for (const format of chatIdFormats) {
+          try {
+            await this.client.getChatById(format);
+            chatId = format;
+            break; // Found working format
+          } catch (error) {
+            // Try next format
+            continue;
+          }
+        }
+      }
+
+      if (!chatId) {
+        logger.info(`Could not find chat for ${normalizedPhone} - skipping typing indicator`);
         return; // Don't throw - typing indicator is optional
       }
 
@@ -272,7 +297,7 @@ export class WhatsAppBot {
 
         // Send initial typing indicator
         await chat.sendStateTyping();
-        logger.debug(`Typing indicator sent to ${normalizedPhone} using ${chatId}`);
+        logger.info(`Typing indicator sent to ${normalizedPhone} using ${chatId}`);
 
         // Clear any existing interval for this phone
         if (this.typingIntervals.has(normalizedPhone)) {
@@ -286,7 +311,7 @@ export class WhatsAppBot {
             if (this.isReady && chatId) {
               const currentChat = await this.client.getChatById(chatId);
               await currentChat.sendStateTyping();
-              logger.debug(`Typing indicator refreshed for ${normalizedPhone}`);
+              logger.info(`Typing indicator refreshed for ${normalizedPhone}`);
             }
           } catch (error) {
             logger.error(`Error refreshing typing indicator for ${normalizedPhone}:`, error);
@@ -301,11 +326,18 @@ export class WhatsAppBot {
         this.typingIntervals.set(normalizedPhone, interval);
       } catch (chatError: any) {
         logger.error(`Error getting chat for ${normalizedPhone}:`, chatError);
+
+        // Check if it's a critical puppeteer error and trigger reconnect if needed
+        if (this.isCriticalPuppeteerError(chatError)) {
+          logger.warn('Critical Puppeteer error detected in sendTypingIndicator, triggering reconnection...');
+          this.reconnect().catch(e => logger.error('Reconnection failed:', e));
+        }
         // Don't throw - typing indicator is optional
       }
+      // Try to clear typing state (optional - WhatsApp clears it automatically)
     } catch (error) {
-      logger.error(`Error sending typing indicator to ${phone}:`, error);
-      // Don't throw error - typing indicator is optional
+      // Ignore all errors in typing indicator to prevent blocking the flow
+      logger.warn(`Failed to send typing indicator to ${phone} (ignored):`, error);
     }
   }
 
@@ -336,7 +368,7 @@ export class WhatsAppBot {
         try {
           const chat = await this.client.getChatById(chatId);
           await chat.clearState();
-          logger.debug(`Typing indicator cleared for ${normalizedPhone} using ${chatId}`);
+          logger.info(`Typing indicator cleared for ${normalizedPhone} using ${chatId}`);
           return; // Success, exit
         } catch (error) {
           // Try next format
@@ -345,7 +377,7 @@ export class WhatsAppBot {
       }
 
       // If all formats failed, it's okay - clearing state is optional
-      logger.debug(`Could not clear typing state for ${normalizedPhone} (this is normal)`);
+      logger.info(`Could not clear typing state for ${normalizedPhone} (this is normal)`);
     } catch (error) {
       logger.error(`Error clearing typing indicator for ${phone}:`, error);
       // Don't throw error - clearing typing indicator is optional
@@ -368,14 +400,26 @@ export class WhatsAppBot {
         throw new Error('WhatsApp client is not ready');
       }
 
-      // Normalize phone number - remove any existing suffix
       const normalizedPhone = phone.split('@')[0];
 
-      // Try multiple chat ID formats
-      const chatIdFormats = [
-        `${normalizedPhone}@c.us`,  // Standard format
-        `${normalizedPhone}@lid`,    // LID format (for business accounts)
-      ];
+      // Determine which formats to try
+      let chatIdFormats: string[] = [];
+
+      if (phone.includes('@')) {
+        // If phone contains @, assume it's a full chat ID and try it first
+        chatIdFormats.push(phone);
+
+        // Also add the other formats as fallback, in case the provided ID was wrong or changed
+        // But avoid adding duplicates
+        if (!phone.endsWith('@c.us')) chatIdFormats.push(`${normalizedPhone}@c.us`);
+        if (!phone.endsWith('@lid')) chatIdFormats.push(`${normalizedPhone}@lid`);
+      } else {
+        // If no suffix, try standard formats
+        chatIdFormats = [
+          `${normalizedPhone}@c.us`,  // Standard format
+          `${normalizedPhone}@lid`,    // LID format (for business accounts)
+        ];
+      }
 
       let lastError: any = null;
 
@@ -386,12 +430,12 @@ export class WhatsAppBot {
 
           // If chat exists, try to send message
           const sentMessage = await this.client.sendMessage(chatId, message);
-          logger.debug(`Message sent to ${normalizedPhone} using ${chatId}`);
+          logger.info(`Message sent to ${normalizedPhone} using ${chatId}`);
           return sentMessage;
         } catch (error: any) {
-          // Check if it's a detached frame or similar critical error
-          if (this.isDetachedFrameError(error)) {
-            logger.warn(`Detached frame error detected while sending message, attempting reconnection...`);
+          // Check if it's a critical puppeteer error
+          if (this.isCriticalPuppeteerError(error)) {
+            logger.warn(`Critical Puppeteer error detected while sending message, attempting reconnection...`);
 
             // Trigger reconnection
             this.reconnect().catch(e => logger.error('Reconnection failed:', e));
@@ -407,14 +451,14 @@ export class WhatsAppBot {
 
           // Check if error is "No LID for user" - try next format
           if (error.message && error.message.includes('No LID for user')) {
-            logger.debug(`No LID for ${normalizedPhone}, trying next format...`);
+            logger.info(`No LID for ${normalizedPhone}, trying next format...`);
             lastError = error;
             continue; // Try next format
           }
 
           // If it's a different error, log and try next format
           if (chatIdFormats.indexOf(chatId) < chatIdFormats.length - 1) {
-            logger.debug(`Error with ${chatId}, trying next format:`, error.message);
+            logger.info(`Error with ${chatId}, trying next format:`, error.message);
             lastError = error;
             continue;
           }
@@ -432,8 +476,8 @@ export class WhatsAppBot {
       // All formats failed
       logger.error(`Failed to send message to ${normalizedPhone} with all formats`);
       throw lastError || new Error(`Failed to send message to ${normalizedPhone}`);
-    } catch (error) {
-      logger.error(`Error in sendMessage for ${phone}:`, error);
+    } catch (error: any) {
+      logger.error(`Error in sendMessage for ${phone}:`, { message: error?.message, stack: error?.stack, error });
       throw error;
     }
   }
