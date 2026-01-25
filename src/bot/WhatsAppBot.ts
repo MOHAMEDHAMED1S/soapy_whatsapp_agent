@@ -160,12 +160,48 @@ export class WhatsAppBot {
 
         // Destroy old client and create new one
         try {
-          await this.client.destroy();
+          await this.destroy(); // Use our robust destroy method
         } catch (destroyError) {
           logger.warn('Error destroying client during reconnect:', destroyError);
         }
 
         // Reinitialize
+        this.client = new Client({
+          authStrategy: new LocalAuth({
+            dataPath: './.wwebjs_auth',
+          }),
+          puppeteer: {
+            headless: true,
+            args: [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage',
+              '--disable-accelerated-2d-canvas',
+              '--no-first-run',
+              '--no-zygote',
+              '--single-process',
+              '--disable-gpu',
+              '--disable-software-rasterizer',
+              '--disable-extensions',
+              '--disable-background-networking',
+              '--disable-background-timer-throttling',
+              '--disable-renderer-backgrounding',
+              '--disable-backgrounding-occluded-windows',
+              '--disable-features=TranslateUI,site-per-process,AudioServiceOutOfProcess,IsolateOrigins',
+              '--disable-ipc-flooding-protection',
+              '--disable-gl-drawing-for-tests',
+              '--mute-audio',
+              '--no-default-browser-check',
+              '--disable-sync',
+            ],
+            timeout: 60000,
+            ignoreHTTPSErrors: true,
+          },
+          restartOnAuthFail: true,
+        });
+
+        this.setupEventHandlers();
+
         await this.client.initialize();
 
         // Success!
@@ -507,7 +543,26 @@ export class WhatsAppBot {
       });
       this.typingIntervals.clear();
 
-      await this.client.destroy();
+      // Explicitly close browser process if it exists (fix for zombie processes)
+      try {
+        const clientAny = this.client as any;
+        if (clientAny.pupBrowser) {
+          logger.info('Found active browser instance, forcing close...');
+          const pages = await clientAny.pupBrowser.pages();
+          await Promise.all(pages.map((page: any) => page.close()));
+          await clientAny.pupBrowser.close();
+          logger.info('Browser instance closed successfully');
+        }
+      } catch (browserError: any) {
+        logger.warn('Error cleaning up browser instance:', browserError.message);
+      }
+
+      try {
+        await this.client.destroy();
+      } catch (clientDestroyError: any) {
+        logger.warn('Error in client.destroy():', clientDestroyError.message);
+      }
+
       this.isReady = false;
       this.isReconnecting = false;
       this.reconnectAttempts = 0;

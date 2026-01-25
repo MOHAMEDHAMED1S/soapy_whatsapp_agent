@@ -7,7 +7,7 @@ export class ConversationManager {
   // Get or create conversation context
   getConversationContext(phone: string): ConversationContext {
     const context = conversationRepository.getConversation(phone);
-    
+
     if (context) {
       return context;
     }
@@ -37,7 +37,7 @@ export class ConversationManager {
   // Add message to conversation
   addMessage(phone: string, role: 'user' | 'assistant', content: string): void {
     const context = this.getConversationContext(phone);
-    
+
     const message: ConversationMessage = {
       role,
       content,
@@ -46,10 +46,10 @@ export class ConversationManager {
 
     context.messages.push(message);
     context.updatedAt = new Date();
-    
-    // Keep only last 50 messages to avoid memory issues
-    if (context.messages.length > 50) {
-      context.messages = context.messages.slice(-50);
+
+    // Keep only last 30 messages to avoid memory issues and improve performance
+    if (context.messages.length > 30) {
+      context.messages = context.messages.slice(-30);
     }
 
     this.saveConversationContext(context);
@@ -73,7 +73,7 @@ export class ConversationManager {
   // Initialize order state
   initializeOrderState(phone: string): OrderState {
     const context = this.getConversationContext(phone);
-    
+
     if (!context.metadata) {
       context.metadata = {};
     }
@@ -98,7 +98,7 @@ export class ConversationManager {
   // Update order state
   updateOrderState(phone: string, orderState: OrderState): void {
     const context = this.getConversationContext(phone);
-    
+
     if (!context.metadata) {
       context.metadata = {};
     }
@@ -116,7 +116,7 @@ export class ConversationManager {
   // Get order state
   getOrderState(phone: string): OrderState {
     const context = this.getConversationContext(phone);
-    
+
     if (!context.metadata || !context.metadata.orderState) {
       return this.initializeOrderState(phone);
     }
@@ -150,7 +150,7 @@ export class ConversationManager {
 
     // Simple pattern matching for order information
     // In a real implementation, you might use NLP or more sophisticated parsing
-    
+
     // Email pattern
     const emailMatch = message.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
     if (emailMatch) {
@@ -171,7 +171,7 @@ export class ConversationManager {
   // Clear order state
   clearOrderState(phone: string): void {
     const context = this.getConversationContext(phone);
-    
+
     if (context.metadata) {
       context.metadata.orderState = {
         step: OrderStep.IDLE,
