@@ -11,12 +11,12 @@ export interface RateLimitConfig {
 
 export class RateLimiterService {
   private db = databaseManager.getDatabase();
-  
+
   // Default configuration
   private config: RateLimitConfig = {
-    maxMessagesPerMinute: 10, // Maximum 5 messages per minute
-    maxMessagesPerWindow: 100, // Maximum 10 messages per window
-    windowSizeMinutes: 5, // 5 minute window
+    maxMessagesPerMinute: 100, // Maximum 5 messages per minute
+    maxMessagesPerWindow: 1000, // Maximum 10 messages per window
+    windowSizeMinutes: 10, // 5 minute window
     autoBlockThreshold: 3, // Auto-block after 3 violations
   };
 
@@ -39,7 +39,7 @@ export class RateLimiterService {
              VALUES (?, 1, ?, ?)`
           )
           .run(phone, now.toISOString(), now.toISOString());
-        
+
         logger.debug(`Created rate tracking for phone: ${phone}`);
         return { allowed: true };
       }
@@ -55,7 +55,7 @@ export class RateLimiterService {
              WHERE phone = ?`
           )
           .run(now.toISOString(), now.toISOString(), phone);
-        
+
         logger.debug(`Reset rate tracking window for phone: ${phone}`);
         return { allowed: true };
       }
@@ -63,19 +63,19 @@ export class RateLimiterService {
       // Check messages in last minute
       const lastMessageTime = new Date(tracking.last_message_time);
       const timeSinceLastMessage = (now.getTime() - lastMessageTime.getTime()) / 1000; // seconds
-      
+
       // If last message was less than a minute ago, check rate limit
       if (timeSinceLastMessage < 60) {
         // Count messages in the last minute (approximate)
         // Since we're tracking per message, we'll use a sliding window approach
         const messagesInLastMinute = tracking.message_count;
-        
+
         if (messagesInLastMinute >= this.config.maxMessagesPerMinute) {
           logger.warn(`Rate limit exceeded for phone: ${phone} - ${messagesInLastMinute} messages in last minute`);
-          
+
           // Check for spam pattern (very rapid messages)
           this.recordViolation(phone, timeSinceLastMessage, tracking.message_count);
-          
+
           return {
             allowed: false,
             reason: `تم تجاوز الحد المسموح من الرسائل (${this.config.maxMessagesPerMinute} رسالة في الدقيقة). يرجى الانتظار قبل إرسال رسالة أخرى.`,
@@ -86,10 +86,10 @@ export class RateLimiterService {
       // Check messages in current window (5 minutes)
       if (tracking.message_count >= this.config.maxMessagesPerWindow) {
         logger.warn(`Rate limit exceeded for phone: ${phone} - ${tracking.message_count} messages in ${this.config.windowSizeMinutes} minute window`);
-        
+
         // Check for spam pattern
         this.recordViolation(phone, timeSinceLastMessage, tracking.message_count);
-        
+
         return {
           allowed: false,
           reason: `تم تجاوز الحد المسموح من الرسائل (${this.config.maxMessagesPerWindow} رسالة في ${this.config.windowSizeMinutes} دقائق). يرجى الانتظار قبل إرسال رسالة أخرى.`,
