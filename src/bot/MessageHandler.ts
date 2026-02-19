@@ -6,6 +6,16 @@ import { whatsappBot } from './WhatsAppBot';
 import { blockedNumbersService } from '../services/BlockedNumbersService';
 import { rateLimiterService } from '../services/RateLimiterService';
 
+// Media data interface for passing downloaded media to Gemini
+export interface MediaData {
+  data: string;      // base64-encoded media content
+  mimeType: string;  // e.g. 'image/jpeg', 'audio/ogg'
+}
+
+// Supported media types for Gemini multimodal
+const SUPPORTED_MEDIA_TYPES = new Set(['image', 'ptt', 'audio', 'video', 'sticker']);
+const MAX_MEDIA_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+
 export class MessageHandler {
   // Queue for processing messages (one at a time per phone number)
   private processingQueue: Map<string, Promise<void>> = new Map();
@@ -22,12 +32,13 @@ export class MessageHandler {
     try {
       const phone = this.extractPhoneNumber(msg.from);
       const chatId = msg.from; // Keep original chat ID for replying
-      const userMessage = msg.body.trim();
+      const userMessage = msg.body?.trim() || '';
+      const hasMedia = msg.hasMedia && SUPPORTED_MEDIA_TYPES.has(msg.type);
 
-      logger.info(`Message from ${phone}: ${userMessage.substring(0, 50)}...`);
+      logger.info(`Message from ${phone}: ${userMessage.substring(0, 50)}${hasMedia ? ` [media: ${msg.type}]` : ''}`);
 
-      // Ignore empty messages
-      if (!userMessage) {
+      // Ignore empty messages without media
+      if (!userMessage && !hasMedia) {
         return;
       }
 
@@ -48,9 +59,8 @@ export class MessageHandler {
           return; // Silently ignore
         }
 
-        // Send rate limit message (only once to avoid spam)
-        // We'll send a warning message, but not process the request
-        await whatsappBot.sendMessage(phone, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.');
+        // Send rate limit message using original chatId for direct @lid targeting
+        await whatsappBot.sendMessage(chatId, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.');
         return;
       }
 
@@ -67,7 +77,7 @@ export class MessageHandler {
       }
 
       // Process message (one at a time per phone number)
-      const processPromise = this.processMessage(phone, userMessage, chatId);
+      const processPromise = this.processMessage(phone, userMessage, chatId, msg);
       this.processingQueue.set(phone, processPromise);
 
       try {
@@ -82,7 +92,7 @@ export class MessageHandler {
   }
 
   // Process a single message
-  private async processMessage(phone: string, userMessage: string, chatId?: string): Promise<void> {
+  private async processMessage(phone: string, userMessage: string, chatId?: string, msg?: Message): Promise<void> {
     // Default to phone if chatId not provided (backward compatibility)
     const replyTo = chatId || phone;
     try {
@@ -92,8 +102,43 @@ export class MessageHandler {
         return;
       }
 
+      // Try to download media if present
+      let mediaData: MediaData | null = null;
+      if (msg?.hasMedia && SUPPORTED_MEDIA_TYPES.has(msg.type)) {
+        try {
+          logger.info(`Downloading media from ${phone} (type: ${msg.type})...`);
+          const media = await msg.downloadMedia();
+
+          if (media && media.data) {
+            // Check size limit (base64 is ~1.37x the original size)
+            const estimatedSize = Math.ceil(media.data.length * 0.75);
+            if (estimatedSize > MAX_MEDIA_SIZE_BYTES) {
+              logger.warn(`Media from ${phone} too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB), skipping`);
+              await whatsappBot.sendMessage(replyTo, 'عذراً، حجم الملف كبير جداً. يرجى إرسال ملف أصغر (الحد الأقصى 10 ميجابايت).');
+              return;
+            }
+
+            mediaData = {
+              data: media.data,
+              mimeType: media.mimetype,
+            };
+            logger.info(`Media downloaded from ${phone}: ${media.mimetype} (${(estimatedSize / 1024).toFixed(0)}KB)`);
+          } else {
+            logger.warn(`Failed to download media from ${phone} - empty result`);
+          }
+        } catch (mediaError: any) {
+          logger.error(`Error downloading media from ${phone}:`, mediaError?.message || mediaError);
+          // Continue without media - treat as text-only message
+        }
+      }
+
+      // Build the user message text for conversation history
+      const messageForHistory = mediaData
+        ? (userMessage ? `[وسائط: ${msg?.type}] ${userMessage}` : `[وسائط: ${msg?.type}]`)
+        : userMessage;
+
       // Add user message to conversation
-      conversationManager.addMessage(phone, 'user', userMessage);
+      conversationManager.addMessage(phone, 'user', messageForHistory || '[وسائط]');
 
       // Send typing indicator
       await whatsappBot.sendTypingIndicator(replyTo);
@@ -107,12 +152,26 @@ export class MessageHandler {
 
       // Generate response using Gemini
       try {
-        const response = await geminiService.generateResponseWithFunctions(
-          userMessage,
-          conversationHistory,
-          phone,
-          currentOrderData
-        );
+        let response;
+
+        if (mediaData) {
+          // Use multimodal generation with media
+          response = await geminiService.generateResponseWithMedia(
+            userMessage,
+            mediaData,
+            conversationHistory,
+            phone,
+            currentOrderData
+          );
+        } else {
+          // Use standard text generation
+          response = await geminiService.generateResponseWithFunctions(
+            userMessage,
+            conversationHistory,
+            phone,
+            currentOrderData
+          );
+        }
 
         // Clear typing indicator before sending message
         await whatsappBot.clearTypingIndicator(replyTo);

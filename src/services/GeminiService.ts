@@ -21,6 +21,7 @@ export class GeminiService {
   private systemPrompt: string = '';
   private updateInterval: NodeJS.Timeout | null = null;
   private readonly UPDATE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+  private updateInProgress: boolean = false;
 
   constructor() {
     this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
@@ -29,7 +30,7 @@ export class GeminiService {
   private getModel(systemInstruction?: string): any {
     // Using gemini-2.5-pro (latest model as of November 2025)
     const modelConfig: any = {
-      model: 'gemini-2.5-pro',
+      model: 'gemini-3.0-pro',
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
@@ -46,10 +47,16 @@ export class GeminiService {
   }
 
   // Update product catalog for system prompt
-  async updateProductCatalog(): Promise<void> {
+  async updateProductCatalog(forceRefresh: boolean = false): Promise<void> {
+    if (this.updateInProgress) {
+      logger.debug('Product catalog update already in progress, skipping');
+      return;
+    }
+
+    this.updateInProgress = true;
     try {
       logger.info('Updating product catalog...');
-      const products = await productService.getAllProducts(true); // Force refresh
+      const products = await productService.getAllProducts(forceRefresh);
       if (products.length > 0) {
         const catalogText = products
           .map((p) => {
@@ -94,6 +101,8 @@ export class GeminiService {
       logger.error('Error updating product catalog:', error.message || error);
       this.productCatalog = 'لا توجد منتجات متاحة حالياً. يرجى المحاولة لاحقاً.';
       this.systemPrompt = this.getSystemPrompt();
+    } finally {
+      this.updateInProgress = false;
     }
   }
 
@@ -107,7 +116,7 @@ export class GeminiService {
     // Set up interval to update every 30 minutes
     this.updateInterval = setInterval(() => {
       logger.info('Auto-updating product catalog (every 30 minutes)...');
-      this.updateProductCatalog().catch((error) => {
+      this.updateProductCatalog(true).catch((error) => {
         logger.error('Error in auto-update of product catalog:', error);
       });
     }, this.UPDATE_INTERVAL_MS);
@@ -2056,8 +2065,223 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       return this.generateResponse(userMessage, conversationHistory, customerPhone);
     }
   }
+
+  // Generate response with media (multimodal: images, voice, audio, video)
+  async generateResponseWithMedia(
+    userMessage: string,
+    mediaData: { data: string; mimeType: string },
+    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
+    customerPhone: string,
+    currentOrderData?: any
+  ): Promise<GeminiResponse> {
+    try {
+      // Update product catalog if empty
+      if (!this.productCatalog) {
+        await this.updateProductCatalog();
+      }
+
+      // Build conversation history (same as generateResponseWithFunctions)
+      const recentHistory = conversationHistory.slice(-10);
+      const historyWithoutCurrent = recentHistory.filter((msg, idx) => {
+        return !(idx === recentHistory.length - 1 && msg.role === 'user');
+      });
+
+      const history: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+      let startIdx = 0;
+      for (let i = 0; i < historyWithoutCurrent.length; i++) {
+        if (historyWithoutCurrent[i].role === 'user') {
+          startIdx = i;
+          break;
+        }
+      }
+
+      let lastRole: 'user' | 'model' | null = null;
+      for (let i = startIdx; i < historyWithoutCurrent.length; i++) {
+        const msg = historyWithoutCurrent[i];
+        const role = (msg.role === 'user' ? 'user' : 'model') as 'user' | 'model';
+        if (lastRole === role) continue;
+        history.push({ role, parts: [{ text: msg.content }] });
+        lastRole = role;
+      }
+
+      const systemPrompt = this.getSystemPrompt(currentOrderData);
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-pro',
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 2048,
+        },
+        systemInstruction: systemPrompt,
+        tools: [
+          {
+            functionDeclarations: this.getFunctionDeclarations(),
+          },
+        ],
+      });
+
+      const validHistory = history.length >= 2 &&
+        history[0].role === 'user' &&
+        history[history.length - 1].role === 'model'
+        ? history
+        : undefined;
+
+      const chat = model.startChat({
+        history: validHistory,
+      });
+
+      // Build multimodal parts array
+      const parts: any[] = [];
+
+      // Add the media as inlineData
+      parts.push({
+        inlineData: {
+          mimeType: mediaData.mimeType,
+          data: mediaData.data,
+        },
+      });
+
+      // Add text prompt
+      const isAudio = mediaData.mimeType.startsWith('audio/') || mediaData.mimeType === 'audio/ogg; codecs=opus';
+      if (userMessage) {
+        // User sent media with a caption/text
+        parts.push({ text: userMessage });
+      } else if (isAudio) {
+        // Voice note / audio without text
+        parts.push({ text: 'استمع لهذه الرسالة الصوتية وأجب عليها بناءً على سياق المحادثة.' });
+      } else {
+        // Image/video/sticker without text
+        parts.push({ text: 'انظر لهذه الصورة وأجب بناءً على سياق المحادثة. إذا كانت تتعلق بمنتج أو طلب، ساعد العميل.' });
+      }
+
+      logger.info(`Sending multimodal request to Gemini: ${mediaData.mimeType}, text: ${(userMessage || '[auto-prompt]').substring(0, 50)}`);
+
+      // Send multimodal message
+      const result = await chat.sendMessage(parts);
+      const response = result.response;
+
+      // Check for function calls (same logic as generateResponseWithFunctions)
+      let functionCalls: any[] = [];
+      try {
+        if (typeof response.functionCalls === 'function') {
+          const calls = response.functionCalls();
+          if (calls && calls.length > 0) {
+            functionCalls = calls;
+          }
+        }
+      } catch (e) {
+        // Ignore
+      }
+
+      if (functionCalls.length === 0) {
+        try {
+          const responseParts = response.candidates?.[0]?.content?.parts || [];
+          const functionCallParts = responseParts.filter((part: any) => part.functionCall);
+          if (functionCallParts.length > 0) {
+            functionCalls = functionCallParts.map((part: any) => part.functionCall);
+          }
+        } catch (e) {
+          // Ignore
+        }
+      }
+
+      // Execute function calls if any
+      if (functionCalls && functionCalls.length > 0) {
+        logger.info(`Function calls from media message: ${functionCalls.length}`);
+
+        const functionResults = await Promise.all(
+          functionCalls.map(async (fc: any) => {
+            logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
+            const fnResult = await this.executeFunction(
+              { name: fc.name, args: fc.args as Record<string, any> },
+              customerPhone
+            );
+            return {
+              functionResponse: {
+                name: fc.name,
+                response: fnResult,
+              },
+            };
+          })
+        );
+
+        try {
+          const functionResponseParts = functionResults.map((fr: any) => {
+            const fnResponse = fr.functionResponse.response;
+            let responseObject: Record<string, any>;
+            if (typeof fnResponse === 'string') {
+              responseObject = { text: fnResponse };
+            } else if (typeof fnResponse === 'object' && fnResponse !== null && !Array.isArray(fnResponse)) {
+              responseObject = JSON.parse(JSON.stringify(fnResponse));
+            } else {
+              responseObject = { result: fnResponse };
+            }
+            return {
+              functionResponse: {
+                name: fr.functionResponse.name,
+                response: responseObject,
+              },
+            };
+          });
+
+          const followUpResult = await chat.sendMessage(functionResponseParts);
+          const finalText = followUpResult.response.text();
+
+          return {
+            text: finalText,
+            functionCall: {
+              name: functionCalls[0].name,
+              args: functionCalls[0].args as Record<string, any>,
+            },
+          };
+        } catch (error: any) {
+          logger.error('Error sending function response (media):', error);
+          const functionResultText = functionResults
+            .map((fr: any) => {
+              const fnResponse = fr.functionResponse.response;
+              return typeof fnResponse === 'string' ? fnResponse : JSON.stringify(fnResponse);
+            })
+            .join('\n\n');
+
+          return {
+            text: functionResultText,
+            functionCall: {
+              name: functionCalls[0].name,
+              args: functionCalls[0].args as Record<string, any>,
+            },
+          };
+        }
+      }
+
+      // No function calls - return text response
+      const responseText = response.text();
+      return { text: responseText };
+    } catch (error: any) {
+      logger.error('Error generating Gemini response with media:', {
+        status: error.status,
+        message: error.message,
+        mimeType: mediaData.mimeType,
+      });
+
+      // Fallback: treat as text-only if media fails
+      if (userMessage) {
+        logger.info('Falling back to text-only generation after media error');
+        return this.generateResponseWithFunctions(
+          userMessage,
+          conversationHistory,
+          customerPhone,
+          currentOrderData
+        );
+      }
+
+      return {
+        text: 'عذراً، لم أتمكن من معالجة هذا الملف. يرجى المحاولة مرة أخرى أو إرسال رسالة نصية.',
+      };
+    }
+  }
 }
 
 // Export singleton instance
 export const geminiService = new GeminiService();
-

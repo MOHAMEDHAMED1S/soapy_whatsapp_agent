@@ -14,39 +14,55 @@ export class WhatsAppBot {
   private readonly RECONNECT_BASE_DELAY = 5000; // 5 seconds
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly HEALTH_CHECK_INTERVAL = 60000; // 1 minute
+  private healthCheckInProgress: boolean = false;
+  private readonly TYPING_REFRESH_INTERVAL = 15000;
+  private readonly MAX_TYPING_DURATION_MS = 60000;
+  private typingSessions: Map<string, { interval: NodeJS.Timeout; chatId: string; chat: any; startedAt: number }> = new Map();
 
   constructor() {
-    this.client = new Client({
+    this.client = this.createClient();
+
+    this.setupEventHandlers();
+  }
+
+  private getPuppeteerOptions() {
+    return {
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-features=TranslateUI,site-per-process,AudioServiceOutOfProcess,IsolateOrigins',
+        '--disable-ipc-flooding-protection',
+        '--disable-gl-drawing-for-tests',
+        '--mute-audio',
+        '--no-default-browser-check',
+        '--disable-sync',
+        '--metrics-recording-only',
+      ],
+      timeout: 60000,
+      ignoreHTTPSErrors: true,
+    };
+  }
+
+  private createClient(): Client {
+    return new Client({
       authStrategy: new LocalAuth({
         dataPath: './.wwebjs_auth',
       }),
-      puppeteer: {
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-          '--disable-extensions',
-          '--disable-background-networking',
-          '--disable-background-timer-throttling',
-          '--disable-renderer-backgrounding',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-features=TranslateUI',
-          '--disable-ipc-flooding-protection',
-        ],
-        timeout: 60000, // 60 seconds timeout for VPS
-        ignoreHTTPSErrors: true,
-      },
+      puppeteer: this.getPuppeteerOptions(),
       restartOnAuthFail: true,
     });
-
-    this.setupEventHandlers();
   }
 
   private setupEventHandlers(): void {
@@ -99,7 +115,7 @@ export class WhatsAppBot {
         }
 
         // Log message source for debugging
-        logger.info(`Message from: ${msg.from}, type: ${typeof msg.from}`);
+        logger.debug(`Message from: ${msg.from}, type: ${typeof msg.from}`);
 
         // Process message
         await messageHandler.handleMessage(msg);
@@ -113,7 +129,7 @@ export class WhatsAppBot {
       // This event fires for all messages, including sent ones
       // We can use it for logging or other purposes
       if (msg.fromMe) {
-        logger.info(`Message sent to ${msg.to}: ${msg.body.substring(0, 50)}...`);
+        logger.debug(`Message sent to ${msg.to}: ${msg.body.substring(0, 50)}...`);
       }
     });
   }
@@ -166,39 +182,7 @@ export class WhatsAppBot {
         }
 
         // Reinitialize
-        this.client = new Client({
-          authStrategy: new LocalAuth({
-            dataPath: './.wwebjs_auth',
-          }),
-          puppeteer: {
-            headless: true,
-            args: [
-              '--no-sandbox',
-              '--disable-setuid-sandbox',
-              '--disable-dev-shm-usage',
-              '--disable-accelerated-2d-canvas',
-              '--no-first-run',
-              '--no-zygote',
-              '--single-process',
-              '--disable-gpu',
-              '--disable-software-rasterizer',
-              '--disable-extensions',
-              '--disable-background-networking',
-              '--disable-background-timer-throttling',
-              '--disable-renderer-backgrounding',
-              '--disable-backgrounding-occluded-windows',
-              '--disable-features=TranslateUI,site-per-process,AudioServiceOutOfProcess,IsolateOrigins',
-              '--disable-ipc-flooding-protection',
-              '--disable-gl-drawing-for-tests',
-              '--mute-audio',
-              '--no-default-browser-check',
-              '--disable-sync',
-            ],
-            timeout: 60000,
-            ignoreHTTPSErrors: true,
-          },
-          restartOnAuthFail: true,
-        });
+        this.client = this.createClient();
 
         this.setupEventHandlers();
 
@@ -227,7 +211,8 @@ export class WhatsAppBot {
 
     this.healthCheckInterval = setInterval(async () => {
       try {
-        if (!this.isReady || this.isReconnecting) return;
+        if (!this.isReady || this.isReconnecting || this.healthCheckInProgress) return;
+        this.healthCheckInProgress = true;
 
         // Try to get state - if this fails, client may be disconnected
         const state = await this.client.getState();
@@ -243,6 +228,8 @@ export class WhatsAppBot {
           logger.warn('Critical Puppeteer error detected, triggering reconnection...');
           await this.reconnect();
         }
+      } finally {
+        this.healthCheckInProgress = false;
       }
     }, this.HEALTH_CHECK_INTERVAL);
 
@@ -277,7 +264,32 @@ export class WhatsAppBot {
   }
 
 
-  private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private async resolveChatId(phone: string, normalizedPhone: string): Promise<string | null> {
+    if (phone.includes('@')) {
+      try {
+        await this.client.getChatById(phone);
+        return phone;
+      } catch (error) {
+        logger.debug(`Provided chat ID ${phone} failed to retrieve chat`);
+      }
+    }
+
+    const chatIdFormats = [
+      `${normalizedPhone}@c.us`,
+      `${normalizedPhone}@lid`,
+    ];
+
+    for (const format of chatIdFormats) {
+      try {
+        await this.client.getChatById(format);
+        return format;
+      } catch (error) {
+        continue;
+      }
+    }
+
+    return null;
+  }
 
   // Send typing indicator and keep it alive
   async sendTypingIndicator(phone: string): Promise<void> {
@@ -287,90 +299,52 @@ export class WhatsAppBot {
         return;
       }
 
-      let chatId: string | null = null;
       const normalizedPhone = phone.split('@')[0];
-
-      if (phone.includes('@')) {
-        // If phone contains @, assume it's a full chat ID and try it first
+      const existingSession = this.typingSessions.get(normalizedPhone);
+      if (existingSession) {
         try {
-          // Check if chat exists
-          // Note: getChatById usually expects a serialized ID. If it's passed directly, it should work.
-          await this.client.getChatById(phone);
-          chatId = phone;
+          await existingSession.chat.sendStateTyping();
+          existingSession.startedAt = Date.now();
+          return;
         } catch (error) {
-          logger.warn(`Provided chat ID ${phone} failed to retrieve chat, falling back to heuristics`);
-          // Fallback to heuristics below if specific ID fails
+          clearInterval(existingSession.interval);
+          this.typingSessions.delete(normalizedPhone);
         }
       }
 
+      const chatId = await this.resolveChatId(phone, normalizedPhone);
       if (!chatId) {
-        // Try multiple chat ID formats approach
-        const chatIdFormats = [
-          `${normalizedPhone}@c.us`,  // Standard format
-          `${normalizedPhone}@lid`,   // LID format (for business accounts)
-        ];
-
-        // Find working chat ID format
-        for (const format of chatIdFormats) {
-          try {
-            await this.client.getChatById(format);
-            chatId = format;
-            break; // Found working format
-          } catch (error) {
-            // Try next format
-            continue;
-          }
-        }
+        logger.debug(`Could not find chat for ${normalizedPhone} - skipping typing indicator`);
+        return;
       }
 
-      if (!chatId) {
-        logger.info(`Could not find chat for ${normalizedPhone} - skipping typing indicator`);
-        return; // Don't throw - typing indicator is optional
+      const chat = await this.client.getChatById(chatId);
+      await chat.sendStateTyping();
+      const startedAt = Date.now();
+
+      if (this.typingSessions.has(normalizedPhone)) {
+        clearInterval(this.typingSessions.get(normalizedPhone)!.interval);
       }
 
-      try {
-        const chat = await this.client.getChatById(chatId);
-
-        // Send initial typing indicator
-        await chat.sendStateTyping();
-        logger.info(`Typing indicator sent to ${normalizedPhone} using ${chatId}`);
-
-        // Clear any existing interval for this phone
-        if (this.typingIntervals.has(normalizedPhone)) {
-          clearInterval(this.typingIntervals.get(normalizedPhone)!);
+      const interval = setInterval(async () => {
+        const session = this.typingSessions.get(normalizedPhone);
+        if (!session) return;
+        if (!this.isReady || this.isReconnecting) return;
+        if (Date.now() - session.startedAt > this.MAX_TYPING_DURATION_MS) {
+          clearInterval(session.interval);
+          this.typingSessions.delete(normalizedPhone);
+          return;
         }
-
-        // Keep typing indicator alive by refreshing it every 10 seconds
-        // WhatsApp automatically clears typing indicator after ~15 seconds
-        const interval = setInterval(async () => {
-          try {
-            if (this.isReady && chatId) {
-              const currentChat = await this.client.getChatById(chatId);
-              await currentChat.sendStateTyping();
-              logger.info(`Typing indicator refreshed for ${normalizedPhone}`);
-            }
-          } catch (error) {
-            logger.error(`Error refreshing typing indicator for ${normalizedPhone}:`, error);
-            // Clear interval on error
-            if (this.typingIntervals.has(normalizedPhone)) {
-              clearInterval(this.typingIntervals.get(normalizedPhone)!);
-              this.typingIntervals.delete(normalizedPhone);
-            }
-          }
-        }, 10000); // Refresh every 10 seconds
-
-        this.typingIntervals.set(normalizedPhone, interval);
-      } catch (chatError: any) {
-        logger.error(`Error getting chat for ${normalizedPhone}:`, chatError);
-
-        // Check if it's a critical puppeteer error and trigger reconnect if needed
-        if (this.isCriticalPuppeteerError(chatError)) {
-          logger.warn('Critical Puppeteer error detected in sendTypingIndicator, triggering reconnection...');
-          this.reconnect().catch(e => logger.error('Reconnection failed:', e));
+        try {
+          await session.chat.sendStateTyping();
+        } catch (error) {
+          logger.error(`Error refreshing typing indicator for ${normalizedPhone}:`, error);
+          clearInterval(session.interval);
+          this.typingSessions.delete(normalizedPhone);
         }
-        // Don't throw - typing indicator is optional
-      }
-      // Try to clear typing state (optional - WhatsApp clears it automatically)
+      }, this.TYPING_REFRESH_INTERVAL);
+
+      this.typingSessions.set(normalizedPhone, { interval, chatId, chat, startedAt });
     } catch (error) {
       // Ignore all errors in typing indicator to prevent blocking the flow
       logger.warn(`Failed to send typing indicator to ${phone} (ignored):`, error);
@@ -387,10 +361,17 @@ export class WhatsAppBot {
       // Normalize phone number
       const normalizedPhone = phone.split('@')[0];
 
-      // Clear the interval that keeps typing indicator alive
-      if (this.typingIntervals.has(normalizedPhone)) {
-        clearInterval(this.typingIntervals.get(normalizedPhone)!);
-        this.typingIntervals.delete(normalizedPhone);
+      const session = this.typingSessions.get(normalizedPhone);
+      if (session) {
+        clearInterval(session.interval);
+        this.typingSessions.delete(normalizedPhone);
+        try {
+          await session.chat.clearState();
+          logger.debug(`Typing indicator cleared for ${normalizedPhone} using ${session.chatId}`);
+          return;
+        } catch (error) {
+          logger.debug(`Failed to clear typing state for ${normalizedPhone} using cached chat`);
+        }
       }
 
       // Try to clear typing state (optional - WhatsApp clears it automatically)
@@ -404,7 +385,7 @@ export class WhatsAppBot {
         try {
           const chat = await this.client.getChatById(chatId);
           await chat.clearState();
-          logger.info(`Typing indicator cleared for ${normalizedPhone} using ${chatId}`);
+          logger.debug(`Typing indicator cleared for ${normalizedPhone} using ${chatId}`);
           return; // Success, exit
         } catch (error) {
           // Try next format
@@ -413,7 +394,7 @@ export class WhatsAppBot {
       }
 
       // If all formats failed, it's okay - clearing state is optional
-      logger.info(`Could not clear typing state for ${normalizedPhone} (this is normal)`);
+      logger.debug(`Could not clear typing state for ${normalizedPhone}`);
     } catch (error) {
       logger.error(`Error clearing typing indicator for ${phone}:`, error);
       // Don't throw error - clearing typing indicator is optional
@@ -535,13 +516,10 @@ export class WhatsAppBot {
       this.stopHealthCheck();
 
       // Clear all typing intervals
-      this.typingIntervals.forEach((interval, phone) => {
-        clearInterval(interval);
-        this.clearTypingIndicator(phone).catch(() => {
-          // Ignore errors when clearing typing indicators during destroy
-        });
+      this.typingSessions.forEach((session) => {
+        clearInterval(session.interval);
       });
-      this.typingIntervals.clear();
+      this.typingSessions.clear();
 
       // Explicitly close browser process if it exists (fix for zombie processes)
       try {
@@ -576,4 +554,3 @@ export class WhatsAppBot {
 
 // Export singleton instance
 export const whatsappBot = new WhatsAppBot();
-
