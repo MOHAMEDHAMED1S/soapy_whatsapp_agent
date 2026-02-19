@@ -19,6 +19,7 @@ const MAX_MEDIA_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 export class MessageHandler {
   // Queue for processing messages (one at a time per phone number)
   private processingQueue: Map<string, Promise<void>> = new Map();
+  private activeProcessingCount: number = 0;
 
   // Extract phone number from WhatsApp message
   private extractPhoneNumber(from: string): string {
@@ -76,7 +77,7 @@ export class MessageHandler {
         }
       }
 
-      // Process message (one at a time per phone number)
+      this.activeProcessingCount++;
       const processPromise = this.processMessage(phone, userMessage, chatId, msg);
       this.processingQueue.set(phone, processPromise);
 
@@ -85,10 +86,22 @@ export class MessageHandler {
       } finally {
         // Remove from queue when done
         this.processingQueue.delete(phone);
+        this.activeProcessingCount = Math.max(0, this.activeProcessingCount - 1);
       }
     } catch (error) {
       logger.error('Error handling message:', error);
     }
+  }
+
+  async waitForIdle(timeoutMs: number = 20000): Promise<boolean> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (this.activeProcessingCount === 0 && this.processingQueue.size === 0) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return this.activeProcessingCount === 0 && this.processingQueue.size === 0;
   }
 
   // Process a single message
@@ -231,4 +244,3 @@ export class MessageHandler {
 
 // Export singleton instance
 export const messageHandler = new MessageHandler();
-

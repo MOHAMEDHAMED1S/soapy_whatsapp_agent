@@ -4,6 +4,7 @@ import { databaseManager } from './database/Database';
 import { productService } from './services/ProductService';
 import { geminiService } from './services/GeminiService';
 import { whatsappBot } from './bot/WhatsAppBot';
+import { messageHandler } from './bot/MessageHandler';
 import { spawn } from 'child_process';
 
 let restartTimer: NodeJS.Timeout | null = null;
@@ -42,6 +43,14 @@ const restartProcess = async (reason: string) => {
   }
   logger.info(`Restarting process (${reason})...`);
   try {
+    const drainTimeoutRaw = process.env.RESTART_DRAIN_TIMEOUT_MS || '20000';
+    const drainTimeoutMs = Number(drainTimeoutRaw);
+    if (Number.isFinite(drainTimeoutMs) && drainTimeoutMs > 0) {
+      const drained = await messageHandler.waitForIdle(drainTimeoutMs);
+      if (!drained) {
+        logger.warn('Restart drain timeout reached, continuing with shutdown');
+      }
+    }
     geminiService.stopAutoUpdate();
     await whatsappBot.destroy();
     databaseManager.close();
