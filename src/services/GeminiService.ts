@@ -1092,11 +1092,41 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             // Retrieve shipping amount from conversation data, which was saved by calculate_order_total
             const conversation = conversationRepository.getConversation(customerPhone);
             const currentOrderData = conversation?.orderData || {};
-            const shippingAmount = currentOrderData.shipping_details?.shipping_cost;
+            let shippingAmount = currentOrderData.shipping_details?.shipping_cost;
 
+            // If shipping was not pre-calculated, calculate it now automatically
             if (shippingAmount === undefined || shippingAmount === null) {
-              logger.error('Shipping amount not found in conversation data for create_order.');
-              return 'حدث خطأ: لم يتم العثور على تكلفة الشحن. يرجى حساب إجمالي الطلب أولاً.';
+              logger.warn('Shipping amount not found in conversation data for create_order. Auto-calculating...');
+
+              try {
+                const product_ids = apiItemsForCalc.map((item: any) => item.product_id);
+                const quantities = apiItemsForCalc.map((item: any) => item.quantity);
+
+                const shippingResponse = await apiService.calculateShippingCost({
+                  product_ids,
+                  quantities,
+                  country_code: country_code as any,
+                });
+
+                if (shippingResponse.success && shippingResponse.data) {
+                  shippingAmount = shippingResponse.data.shipping_cost;
+                  // Save for future use
+                  currentOrderData.shipping_details = shippingResponse.data;
+                  conversationRepository.saveConversation(
+                    customerPhone,
+                    conversation?.messages || [],
+                    currentOrderData,
+                    conversation?.metadata
+                  );
+                  logger.info(`Auto-calculated shipping: ${shippingAmount}`);
+                } else {
+                  logger.error('Failed to auto-calculate shipping:', shippingResponse.message);
+                  return 'حدث خطأ في حساب تكلفة الشحن. يرجى المحاولة مرة أخرى.';
+                }
+              } catch (shippingError: any) {
+                logger.error('Error auto-calculating shipping:', shippingError.message);
+                return 'حدث خطأ في حساب تكلفة الشحن. يرجى المحاولة مرة أخرى.';
+              }
             }
 
             // Calculate total to verify before creating order

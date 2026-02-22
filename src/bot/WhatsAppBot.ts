@@ -2,6 +2,9 @@ import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
 import { logger } from '../utils/logger';
 import { messageHandler } from './MessageHandler';
+import * as fs from 'fs';
+import * as path from 'path';
+import { execSync } from 'child_process';
 
 export class WhatsAppBot {
   private client: Client;
@@ -134,9 +137,42 @@ export class WhatsAppBot {
     });
   }
 
+  // Clean up stale browser locks and processes from previous crashes
+  private async cleanupStaleBrowser(): Promise<void> {
+    const sessionDir = path.resolve('./.wwebjs_auth/session');
+    const lockFile = path.join(sessionDir, 'SingletonLock');
+
+    try {
+      // Remove SingletonLock file if it exists
+      if (fs.existsSync(lockFile)) {
+        fs.unlinkSync(lockFile);
+        logger.info('Removed stale browser SingletonLock file');
+      }
+    } catch (err: any) {
+      logger.warn('Could not remove SingletonLock:', err.message);
+    }
+
+    try {
+      // Kill any orphaned chromium/chrome processes related to our session
+      // This is safe because we haven't started our own browser yet
+      execSync('pkill -f "chromium.*wwebjs_auth" || true', { stdio: 'ignore' });
+      execSync('pkill -f "chrome.*wwebjs_auth" || true', { stdio: 'ignore' });
+      logger.info('Cleaned up orphaned browser processes');
+    } catch (err: any) {
+      // pkill may fail on some systems or if no processes found - that's fine
+      logger.debug('Browser process cleanup (non-critical):', err.message);
+    }
+
+    // Brief delay to ensure processes are fully terminated
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+
   // Initialize the bot
   async initialize(): Promise<void> {
     try {
+      // Clean up any stale browser processes/locks from previous crashes
+      await this.cleanupStaleBrowser();
+
       logger.info('Initializing WhatsApp bot...');
       logger.info('Please wait while connecting to WhatsApp Web...');
       await this.client.initialize();
