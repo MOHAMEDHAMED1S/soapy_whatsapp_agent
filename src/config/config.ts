@@ -5,7 +5,8 @@ dotenv.config();
 export const config = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || '',
-    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    model: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+    fallbackModel: process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash',
   },
   api: {
     baseUrl: process.env.API_BASE_URL || 'https://api.soapy-bubbles.com/api/v1',

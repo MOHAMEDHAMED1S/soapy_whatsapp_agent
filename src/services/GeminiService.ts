@@ -27,10 +27,10 @@ export class GeminiService {
     this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
   }
 
-  private getModel(systemInstruction?: string): any {
+  private getModel(systemInstruction?: string, useFallbackModel: boolean = false): any {
     // Using configured Gemini model from settings
     const modelConfig: any = {
-      model: config.gemini.model,
+      model: useFallbackModel && config.gemini.fallbackModel ? config.gemini.fallbackModel : config.gemini.model,
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
@@ -38,7 +38,7 @@ export class GeminiService {
       },
     };
 
-    // Add system instruction if provided (gemini-2.5-pro supports systemInstruction as string)
+    // Add system instruction if provided (supports systemInstruction as string)
     if (systemInstruction) {
       modelConfig.systemInstruction = systemInstruction;
     }
@@ -1761,7 +1761,8 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
   async generateResponse(
     userMessage: string,
     conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
-    _customerPhone: string
+    _customerPhone: string,
+    useFallbackModel: boolean = false
   ): Promise<GeminiResponse> {
     try {
       // Update product catalog if empty
@@ -1782,7 +1783,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       const prompt = `${this.systemPrompt}\n\nتاريخ المحادثة:\n${history}\n\nالمستخدم: ${userMessage}\n\nالمساعد:`;
 
       // Get model with system instruction
-      const model = this.getModel(this.systemPrompt);
+      const model = this.getModel(this.systemPrompt, useFallbackModel);
 
       // Generate content
       const result = await model.generateContent(prompt);
@@ -1793,7 +1794,23 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         text,
       };
     } catch (error: any) {
-      logger.error('Error generating Gemini response:', error);
+      logger.error(`Error generating Gemini response (fallback: ${useFallbackModel}):`, error);
+      
+      // If primary failed, try simple generation with fallback model
+      if (!useFallbackModel && config.gemini.fallbackModel) {
+        logger.info(`Attempting simple generation fallback to model: ${config.gemini.fallbackModel}...`);
+        try {
+          return await this.generateResponse(
+            userMessage,
+            conversationHistory,
+            _customerPhone,
+            true
+          );
+        } catch (fallbackError: any) {
+          logger.error('Simple generation fallback model also failed:', fallbackError);
+        }
+      }
+      
       throw new Error(`Failed to generate response: ${error.message}`);
     }
   }
@@ -1803,7 +1820,8 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
     userMessage: string,
     conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
     customerPhone: string,
-    currentOrderData?: any
+    currentOrderData?: any,
+    useFallbackModel: boolean = false
   ): Promise<GeminiResponse> {
     try {
       // Update product catalog if empty
@@ -1811,7 +1829,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         await this.updateProductCatalog();
       }
 
-      // Build conversation history for chat (gemini-2.5-pro supports chat history)
+      // Build conversation history for chat
       // IMPORTANT: First message in history must be 'user', not 'model'
       // History must be pairs: user -> model -> user -> model
       const recentHistory = conversationHistory.slice(-10); // Limit to last 10 messages
@@ -1857,15 +1875,16 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       const systemPrompt = this.getSystemPrompt(currentOrderData);
 
       // Get model with tools and system instruction (supports configured model)
+      const modelName = useFallbackModel && config.gemini.fallbackModel ? config.gemini.fallbackModel : config.gemini.model;
       const model = this.genAI.getGenerativeModel({
-        model: config.gemini.model,
+        model: modelName,
         generationConfig: {
           temperature: 0.7,
           topK: 40,
           topP: 0.95,
           maxOutputTokens: 2048,
         },
-        systemInstruction: systemPrompt, // gemini-2.5-pro supports string systemInstruction
+        systemInstruction: systemPrompt, // supports string systemInstruction
         tools: [
           {
             functionDeclarations: this.getFunctionDeclarations(),
@@ -2072,27 +2091,31 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         text: responseText,
       };
     } catch (error: any) {
-      logger.error('Error generating Gemini response with functions:', {
+      logger.error(`Error generating Gemini response with functions (fallback: ${useFallbackModel}):`, {
         status: error.status,
         statusText: error.statusText,
         message: error.message,
         errorDetails: error.errorDetails,
       });
 
-      // If it's a 404 error, the model might not be available or API key doesn't have access
-      if (error.status === 404 || error.message?.includes('404') || error.statusText === 'Not Found') {
-        logger.error('API endpoint returned 404. Possible reasons:');
-        logger.error(`1. Model ${config.gemini.model} is not available in your region/API key`);
-        logger.error(`2. API key does not have access to ${config.gemini.model}`);
-        logger.error('3. API endpoint has changed');
-        logger.error('Falling back to simple generation without function calling...');
-
-        // Fallback: use simple generateContent without function calling
-        return this.generateResponse(userMessage, conversationHistory, customerPhone);
+      // If we haven't tried the fallback model yet, try it now!
+      if (!useFallbackModel && config.gemini.fallbackModel) {
+        logger.info(`Attempting fallback to model: ${config.gemini.fallbackModel}...`);
+        try {
+          return await this.generateResponseWithFunctions(
+            userMessage,
+            conversationHistory,
+            customerPhone,
+            currentOrderData,
+            true
+          );
+        } catch (fallbackError: any) {
+          logger.error('Fallback model also failed in generateResponseWithFunctions:', fallbackError);
+        }
       }
 
-      // Fallback to simple generation
-      return this.generateResponse(userMessage, conversationHistory, customerPhone);
+      // Fallback: use simple generateContent without function calling using the fallback model
+      return this.generateResponse(userMessage, conversationHistory, customerPhone, useFallbackModel || true);
     }
   }
 
@@ -2102,7 +2125,8 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
     mediaData: { data: string; mimeType: string },
     conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
     customerPhone: string,
-    currentOrderData?: any
+    currentOrderData?: any,
+    useFallbackModel: boolean = false
   ): Promise<GeminiResponse> {
     try {
       // Update product catalog if empty
@@ -2136,8 +2160,9 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
       const systemPrompt = this.getSystemPrompt(currentOrderData);
 
+      const modelName = useFallbackModel && config.gemini.fallbackModel ? config.gemini.fallbackModel : config.gemini.model;
       const model = this.genAI.getGenerativeModel({
-        model: config.gemini.model,
+        model: modelName,
         generationConfig: {
           temperature: 0.7,
           topK: 40,
@@ -2289,11 +2314,28 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       const responseText = response.text();
       return { text: responseText };
     } catch (error: any) {
-      logger.error('Error generating Gemini response with media:', {
+      logger.error(`Error generating Gemini response with media (fallback: ${useFallbackModel}):`, {
         status: error.status,
         message: error.message,
         mimeType: mediaData.mimeType,
       });
+
+      // If we haven't tried the fallback model yet, try it now!
+      if (!useFallbackModel && config.gemini.fallbackModel) {
+        logger.info(`Attempting media fallback to model: ${config.gemini.fallbackModel}...`);
+        try {
+          return await this.generateResponseWithMedia(
+            userMessage,
+            mediaData,
+            conversationHistory,
+            customerPhone,
+            currentOrderData,
+            true
+          );
+        } catch (fallbackError: any) {
+          logger.error('Media fallback model also failed:', fallbackError);
+        }
+      }
 
       // Fallback: treat as text-only if media fails
       if (userMessage) {
@@ -2302,7 +2344,8 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           userMessage,
           conversationHistory,
           customerPhone,
-          currentOrderData
+          currentOrderData,
+          useFallbackModel
         );
       }
 
