@@ -28,9 +28,9 @@ export class GeminiService {
   }
 
   private getModel(systemInstruction?: string): any {
-    // Using gemini-2.5-pro (latest model as of November 2025)
+    // Using configured Gemini model from settings
     const modelConfig: any = {
-      model: 'gemini-3.0-pro',
+      model: config.gemini.model,
       generationConfig: {
         temperature: 0.7,
         topP: 0.95,
@@ -1856,9 +1856,9 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       // Get system prompt with current order data
       const systemPrompt = this.getSystemPrompt(currentOrderData);
 
-      // Get model with tools and system instruction (gemini-2.5-pro supports this)
+      // Get model with tools and system instruction (supports configured model)
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.5-pro',
+        model: config.gemini.model,
         generationConfig: {
           temperature: 0.7,
           topK: 40,
@@ -2082,8 +2082,8 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       // If it's a 404 error, the model might not be available or API key doesn't have access
       if (error.status === 404 || error.message?.includes('404') || error.statusText === 'Not Found') {
         logger.error('API endpoint returned 404. Possible reasons:');
-        logger.error('1. Model gemini-2.5-pro is not available in your region/API key');
-        logger.error('2. API key does not have access to gemini-2.5-pro');
+        logger.error(`1. Model ${config.gemini.model} is not available in your region/API key`);
+        logger.error(`2. API key does not have access to ${config.gemini.model}`);
         logger.error('3. API endpoint has changed');
         logger.error('Falling back to simple generation without function calling...');
 
@@ -2137,7 +2137,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       const systemPrompt = this.getSystemPrompt(currentOrderData);
 
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.5-pro',
+        model: config.gemini.model,
         generationConfig: {
           temperature: 0.7,
           topK: 40,
