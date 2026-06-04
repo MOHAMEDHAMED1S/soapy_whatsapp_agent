@@ -23,9 +23,10 @@ export class WhatsAppBot {
   private typingSessions: Map<string, { interval: NodeJS.Timeout; chatId: string; chat: any; startedAt: number }> = new Map();
 
   constructor() {
-    this.client = this.createClient();
-
-    this.setupEventHandlers();
+    // Client is created lazily in initialize() to avoid
+    // creating a browser instance at module-import time,
+    // which would race with cleanupStaleBrowser().
+    this.client = null as unknown as Client;
   }
 
   private getPuppeteerOptions() {
@@ -146,20 +147,28 @@ export class WhatsAppBot {
     });
   }
 
+  // Remove SingletonLock and related lock files from the session directory
+  private removeBrowserLockFiles(): void {
+    const sessionDir = path.resolve('./.wwebjs_auth/session');
+    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+
+    for (const lockName of lockFiles) {
+      const lockFile = path.join(sessionDir, lockName);
+      try {
+        if (fs.existsSync(lockFile)) {
+          fs.unlinkSync(lockFile);
+          logger.info(`Removed browser lock file: ${lockName}`);
+        }
+      } catch (err: any) {
+        logger.warn(`Could not remove ${lockName}:`, err.message);
+      }
+    }
+  }
+
   // Clean up stale browser locks and processes from previous crashes
   private async cleanupStaleBrowser(): Promise<void> {
-    const sessionDir = path.resolve('./.wwebjs_auth/session');
-    const lockFile = path.join(sessionDir, 'SingletonLock');
-
-    try {
-      // Remove SingletonLock file if it exists
-      if (fs.existsSync(lockFile)) {
-        fs.unlinkSync(lockFile);
-        logger.info('Removed stale browser SingletonLock file');
-      }
-    } catch (err: any) {
-      logger.warn('Could not remove SingletonLock:', err.message);
-    }
+    // Remove lock files first
+    this.removeBrowserLockFiles();
 
     try {
       // Kill any orphaned chromium/chrome processes related to our session
@@ -174,8 +183,11 @@ export class WhatsAppBot {
       logger.debug('Browser process cleanup (non-critical):', err.message);
     }
 
-    // Brief delay to ensure processes are fully terminated
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Wait for processes to fully terminate and release file locks
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Remove lock files again in case the dying process recreated them
+    this.removeBrowserLockFiles();
   }
 
   // Initialize the bot
@@ -183,6 +195,11 @@ export class WhatsAppBot {
     try {
       // Clean up any stale browser processes/locks from previous crashes
       await this.cleanupStaleBrowser();
+
+      // Create the client *after* cleanup so the browser isn't started
+      // while old lock files or processes are still around.
+      this.client = this.createClient();
+      this.setupEventHandlers();
 
       logger.info('Initializing WhatsApp bot...');
       logger.info('Please wait while connecting to WhatsApp Web...');
@@ -575,6 +592,14 @@ export class WhatsAppBot {
       });
       this.typingSessions.clear();
 
+      if (!this.client) {
+        this.isReady = false;
+        this.isReconnecting = false;
+        this.reconnectAttempts = 0;
+        logger.info('WhatsApp bot destroyed (no client was active)');
+        return;
+      }
+
       // Explicitly close browser process if it exists (fix for zombie processes)
       try {
         const clientAny = this.client as any;
@@ -594,6 +619,10 @@ export class WhatsAppBot {
       } catch (clientDestroyError: any) {
         logger.warn('Error in client.destroy():', clientDestroyError.message);
       }
+
+      // Remove lock files *after* the browser is closed so the next
+      // startup doesn't see a stale lock from this session.
+      this.removeBrowserLockFiles();
 
       this.isReady = false;
       this.isReconnecting = false;
