@@ -5,7 +5,6 @@ import { productService } from './services/ProductService';
 import { geminiService } from './services/GeminiService';
 import { whatsappBot } from './bot/WhatsAppBot';
 import { messageHandler } from './bot/MessageHandler';
-import { spawn } from 'child_process';
 
 let restartTimer: NodeJS.Timeout | null = null;
 let isRestarting = false;
@@ -58,22 +57,10 @@ const restartProcess = async (reason: string) => {
     logger.error('Error during restart cleanup:', error);
   }
 
-  try {
-    const child = spawn(process.argv[0], process.argv.slice(1), {
-      stdio: 'inherit',
-      env: process.env,
-    });
-    child.on('error', (error) => {
-      logger.error('Failed to spawn restart process:', error);
-      process.exit(1);
-    });
-    child.on('spawn', () => {
-      process.exit(0);
-    });
-  } catch (error) {
-    logger.error('Failed to restart process:', error);
-    process.exit(1);
-  }
+  // Exit gracefully — PM2 (or other process manager) will restart the app.
+  // Using spawn() here would create orphaned processes that hold the browser lock,
+  // causing "browser already running" errors on the next startup.
+  process.exit(0);
 };
 
 const scheduleAutoRestart = () => {
@@ -131,7 +118,6 @@ const main = async () => {
     geminiService.startAutoUpdate();
 
     // Initialize WhatsApp bot (this is blocking and required)
-    logger.info('Initializing WhatsApp bot...');
     await whatsappBot.initialize();
 
     logger.info('WhatsApp Agent is ready!');

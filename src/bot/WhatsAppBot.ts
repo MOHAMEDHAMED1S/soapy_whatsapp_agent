@@ -94,6 +94,15 @@ export class WhatsAppBot {
     // Disconnected event - trigger auto-reconnect
     this.client.on('disconnected', async (reason) => {
       this.isReady = false;
+
+      // Debounce: ignore rapid duplicate disconnected events (e.g., post-auth navigation)
+      const now = Date.now();
+      if (now - this.lastDisconnectedTime < this.DISCONNECT_DEBOUNCE_MS) {
+        logger.debug(`Ignoring disconnected event (debounced): ${reason}`);
+        return;
+      }
+      this.lastDisconnectedTime = now;
+
       logger.warn('WhatsApp client disconnected:', reason);
 
       // Stop health check during reconnection
@@ -157,6 +166,8 @@ export class WhatsAppBot {
       // This is safe because we haven't started our own browser yet
       execSync('pkill -f "chromium.*wwebjs_auth" || true', { stdio: 'ignore' });
       execSync('pkill -f "chrome.*wwebjs_auth" || true', { stdio: 'ignore' });
+      execSync('pkill -f "Google Chrome.*wwebjs_auth" || true', { stdio: 'ignore' });
+      execSync('pkill -f "Chromium.*wwebjs_auth" || true', { stdio: 'ignore' });
       logger.info('Cleaned up orphaned browser processes');
     } catch (err: any) {
       // pkill may fail on some systems or if no processes found - that's fine
@@ -164,7 +175,7 @@ export class WhatsAppBot {
     }
 
     // Brief delay to ensure processes are fully terminated
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
   // Initialize the bot
@@ -193,6 +204,10 @@ export class WhatsAppBot {
     }
   }
 
+  // Track last disconnected time to debounce rapid re-triggers
+  private lastDisconnectedTime: number = 0;
+  private readonly DISCONNECT_DEBOUNCE_MS = 10000; // ignore if fired within 10s of last
+
   // Auto-reconnect with exponential backoff
   private async reconnect(): Promise<void> {
     if (this.isReconnecting) {
@@ -216,6 +231,9 @@ export class WhatsAppBot {
         } catch (destroyError) {
           logger.warn('Error destroying client during reconnect:', destroyError);
         }
+
+        // Kill any orphaned browser processes before starting a new one
+        await this.cleanupStaleBrowser();
 
         // Reinitialize
         this.client = this.createClient();
