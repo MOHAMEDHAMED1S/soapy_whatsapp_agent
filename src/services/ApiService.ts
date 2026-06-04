@@ -31,6 +31,7 @@ export class ApiService {
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
+        'X-Client-Platform': 'whatsapp',
       },
     });
 

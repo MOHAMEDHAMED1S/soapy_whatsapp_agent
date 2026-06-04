@@ -53,6 +53,10 @@ const restartProcess = async (reason: string) => {
     geminiService.stopAutoUpdate();
     await whatsappBot.destroy();
     databaseManager.close();
+
+    // Brief delay to ensure all OS-level file handles are released
+    // before PM2 starts a new instance.
+    await new Promise(resolve => setTimeout(resolve, 1000));
   } catch (error) {
     logger.error('Error during restart cleanup:', error);
   }
