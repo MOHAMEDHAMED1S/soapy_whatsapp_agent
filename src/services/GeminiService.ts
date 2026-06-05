@@ -2078,14 +2078,13 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           break; // No more function calls, we are done
         }
 
-        // Detect infinite loops: if every function in this iteration is
-        // an exploratory/read-only call, increment counter and break if ≥3
         const allExploratory = functionCalls.every((fc: any) => EXPLORATORY_FUNCTIONS.has(fc.name));
+        let interceptExploratory = false;
         if (allExploratory) {
           consecutiveExploratoryCount++;
           if (consecutiveExploratoryCount >= 3) {
-            logger.warn(`Breaking exploratory loop after ${iteration + 1} iterations (all ${EXPLORATORY_FUNCTIONS.size} type calls)`);
-            break;
+            logger.warn(`Intercepting exploratory loop after ${iteration + 1} iterations`);
+            interceptExploratory = true;
           }
         } else {
           consecutiveExploratoryCount = 0;
@@ -2097,6 +2096,14 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         // Execute function calls
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
+            if (interceptExploratory && EXPLORATORY_FUNCTIONS.has(fc.name)) {
+               return {
+                 functionResponse: {
+                   name: fc.name,
+                   response: '[أمر صريح للنظام: توقف فوراً عن البحث! لقد وصلت للحد الأقصى المسموح به لمحاولات البحث المتتالية. توقف عن استدعاء الدوال الآن وأرسل الرد للعميل بالاعتماد على ما وجدته حتى الآن أو أخبره بأنك لم تجد طلبه]',
+                 }
+               };
+            }
             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
             const funcResult = await this.executeFunction(
               {
