@@ -2033,69 +2033,46 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         60000,
         'Gemini sendMessage'
       );
-      const response = result.response;
 
-      // Check if function call was made (gemini-2.5-pro function calling)
-      // Try multiple ways to get function calls
-      let functionCalls: any[] = [];
-
-      try {
-        // Method 1: response.functionCalls() if available
-        if (typeof response.functionCalls === 'function') {
-          const calls = response.functionCalls();
-          if (calls && calls.length > 0) {
-            functionCalls = calls;
-          }
-        }
-      } catch (e) {
-        // Ignore
-      }
-
-      // Method 2: Check response.candidates for function calls
-      if (functionCalls.length === 0) {
-        try {
-          const parts = response.candidates?.[0]?.content?.parts || [];
-          const functionCallParts = parts.filter((part: any) => part.functionCall);
-          if (functionCallParts.length > 0) {
-            functionCalls = functionCallParts.map((part: any) => part.functionCall);
-          }
-        } catch (e) {
-          // Ignore
-        }
-      }
-
-      // Check if text is empty and no functions were called
+      // Support up to 15 chained function calls
+      let currentResponse = result.response;
+      let allFunctionCalls: any[] = [];
       let textContent = '';
-      try {
-        textContent = response.text() || '';
-      } catch (e) {
-        // text() can throw if response was blocked or empty
-      }
 
-      if (!textContent && functionCalls.length === 0) {
-        logger.warn('Gemini returned an empty response text with no function calls');
-        return { text: 'عذراً، لم أتمكن من استيعاب طلبك. يرجى إعادة صياغته مرة أخرى.' };
-      }
+      for (let iteration = 0; iteration < 15; iteration++) {
+        let functionCalls: any[] = [];
+        
+        try {
+          if (typeof currentResponse.functionCalls === 'function') {
+            const calls = currentResponse.functionCalls();
+            if (calls && calls.length > 0) {
+              functionCalls = calls;
+            }
+          }
+        } catch (e) {}
 
-      // Method 3: Check if response contains code blocks that look like function calls
-      // This is a fallback if Gemini tries to write code instead of using function calling
-      if (functionCalls.length === 0) {
-        const responseText = textContent;
-        // Check if response contains code that looks like create_order call
-        if (responseText.includes('create_order') && responseText.includes('customer_name')) {
-          logger.warn('Detected code output instead of function call. Response may need manual parsing.');
-          // Don't try to parse - let it fail and user will see the issue
+        if (functionCalls.length === 0) {
+          try {
+            const parts = currentResponse.candidates?.[0]?.content?.parts || [];
+            const functionCallParts = parts.filter((part: any) => part.functionCall);
+            if (functionCallParts.length > 0) {
+              functionCalls = functionCallParts.map((part: any) => part.functionCall);
+            }
+          } catch (e) {}
         }
-      }
 
-      if (functionCalls && functionCalls.length > 0) {
-        logger.info(`Function calls detected: ${functionCalls.length}`);
+        if (functionCalls.length === 0) {
+          break; // No more function calls, we are done
+        }
+
+        logger.info(`Function calls detected (iteration ${iteration + 1}): ${functionCalls.length}`);
+        allFunctionCalls.push(...functionCalls);
 
         // Execute function calls
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
-            const result = await this.executeFunction(
+            const funcResult = await this.executeFunction(
               {
                 name: fc.name,
                 args: fc.args as Record<string, any>,
@@ -2105,7 +2082,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             return {
               functionResponse: {
                 name: fc.name,
-                response: result,
+                response: funcResult,
               },
             };
           })
@@ -2113,31 +2090,16 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
         // Send function results back to model using chat
         try {
-          // Build function response parts for gemini-2.5-pro
-          // IMPORTANT: function_response.response must be a Struct (object), not a string
-          // The response should be a plain JSON object that can be serialized
           const functionResponseParts = functionResults.map((fr: any) => {
-            const response = fr.functionResponse.response;
-
-            // Convert string response to object
-            // Gemini API requires function response to be a Struct (JSON-serializable object)
+            const funcResponse = fr.functionResponse.response;
             let responseObject: Record<string, any>;
 
-            if (typeof response === 'string') {
-              // For string responses, wrap in an object with a text field
-              // This is the standard way to return text results from functions
-              responseObject = {
-                text: response,
-              };
-            } else if (typeof response === 'object' && response !== null && !Array.isArray(response)) {
-              // Already a plain object, use it directly
-              // Ensure it's a plain object (not a class instance)
-              responseObject = JSON.parse(JSON.stringify(response));
+            if (typeof funcResponse === 'string') {
+              responseObject = { text: funcResponse };
+            } else if (typeof funcResponse === 'object' && funcResponse !== null && !Array.isArray(funcResponse)) {
+              responseObject = JSON.parse(JSON.stringify(funcResponse));
             } else {
-              // Fallback: wrap primitive or array in object
-              responseObject = {
-                result: response,
-              };
+              responseObject = { result: funcResponse };
             }
 
             return {
@@ -2154,37 +2116,55 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             60000,
             'Gemini sendMessage followUp'
           );
-          const finalText = followUpResult.response.text();
-
-          return {
-            text: finalText,
-            functionCall: {
-              name: functionCalls[0].name,
-              args: functionCalls[0].args as Record<string, any>,
-            },
-          };
+          currentResponse = followUpResult.response;
         } catch (error: any) {
           logger.error('Error sending function response:', error);
-          // If function response fails, return the function result as text
+          // If sending function response fails, return the function result as text directly
           const functionResultText = functionResults
             .map((fr: any) => {
-              const response = fr.functionResponse.response;
-              return typeof response === 'string' ? response : JSON.stringify(response);
+              const res = fr.functionResponse.response;
+              return typeof res === 'string' ? res : JSON.stringify(res);
             })
             .join('\n\n');
-
+            
           return {
             text: functionResultText,
             functionCall: {
-              name: functionCalls[0].name,
-              args: functionCalls[0].args as Record<string, any>,
+              name: allFunctionCalls[0].name,
+              args: allFunctionCalls[0].args as Record<string, any>,
             },
           };
         }
       }
 
-      // Get response text
-      const responseText = response.text();
+      // After all function calls (or if none), get the final text response
+      try {
+        textContent = currentResponse.text() || '';
+      } catch (e) {
+        // text() can throw if response was blocked or empty
+      }
+
+      if (!textContent && allFunctionCalls.length === 0) {
+        logger.warn('Gemini returned an empty response text with no function calls');
+        return { text: 'عذراً، لم أتمكن من استيعاب طلبك. يرجى إعادة صياغته مرة أخرى.' };
+      }
+
+      // Check if response contains code blocks that look like function calls
+      if (allFunctionCalls.length === 0) {
+        if (textContent.includes('create_order') && textContent.includes('customer_name')) {
+          logger.warn('Detected code output instead of function call. Response may need manual parsing.');
+        }
+      }
+
+      if (allFunctionCalls.length > 0) {
+        return {
+          text: textContent,
+          functionCall: {
+            name: allFunctionCalls[0].name,
+            args: allFunctionCalls[0].args as Record<string, any>,
+          },
+        };
+      }
 
       // CRITICAL SECURITY CHECK: Detect fake order creation
       // Check if response claims to have created an order without actually calling create_order
@@ -2196,13 +2176,13 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         /order.*number.*\d+/i,
       ];
 
-      const hasFakeOrder = fakeOrderPatterns.some(pattern => pattern.test(responseText));
-      const hasCreateOrderCall = functionCalls && functionCalls.some((fc: any) => fc.name === 'create_order');
+      const hasFakeOrder = fakeOrderPatterns.some(pattern => pattern.test(textContent));
+      const hasCreateOrderCall = allFunctionCalls.some((fc: any) => fc.name === 'create_order');
 
       if (hasFakeOrder && !hasCreateOrderCall) {
         logger.error('CRITICAL SECURITY: Detected fake order creation attempt!', {
-          responseText: responseText.substring(0, 200),
-          functionCalls: functionCalls?.map((fc: any) => fc.name),
+          responseText: textContent.substring(0, 200),
+          functionCalls: allFunctionCalls.map((fc: any) => fc.name),
         });
         return {
           text: 'عذراً، حدث خطأ. لا يمكنني إنشاء الطلب بدون استخدام النظام. يرجى المحاولة مرة أخرى أو الاتصال بالدعم.',
@@ -2211,15 +2191,15 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
       // Check if response contains code blocks (indicating Gemini tried to write code instead of function calling)
       // This is a critical error - Gemini should use Function Calling, not write code
-      if (responseText.includes('{{tool_code}}') ||
-        responseText.includes('print(') ||
-        responseText.includes('def ') ||
-        responseText.includes('function ') ||
-        responseText.includes('```python') ||
-        responseText.includes('```javascript') ||
-        (responseText.includes('create_order(') && responseText.includes('customer_name=') && !responseText.includes('functionResponse'))) {
+      if (textContent.includes('{{tool_code}}') ||
+        textContent.includes('print(') ||
+        textContent.includes('def ') ||
+        textContent.includes('function ') ||
+        textContent.includes('```python') ||
+        textContent.includes('```javascript') ||
+        (textContent.includes('create_order(') && textContent.includes('customer_name=') && !textContent.includes('functionResponse'))) {
         logger.error('CRITICAL ERROR: Gemini wrote code instead of using Function Calling!');
-        logger.error('Response contains code. First 500 chars:', responseText.substring(0, 500));
+        logger.error('Response contains code. First 500 chars:', textContent.substring(0, 500));
         logger.error('This should not happen - Gemini should use Function Calling API, not write code');
 
         // Return error message to user
@@ -2229,7 +2209,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       }
 
       return {
-        text: responseText,
+        text: textContent,
       };
     } catch (error: any) {
       logger.error(`Error generating Gemini response with functions (fallback: ${useFallbackModel}):`, {

@@ -119,8 +119,8 @@ export class MessageHandler {
       this.processingTokens.set(phone, currentToken);
       this.processingQueue.set(phone, processPromise);
 
-      // Timeout to prevent hanging forever
-      const TIMEOUT_MS = 60000;
+      // Timeout to prevent hanging forever (increased to 5 minutes to support up to 15 chained functions)
+      const TIMEOUT_MS = 300000;
       const timeoutPromise = new Promise<void>((_, reject) =>
         setTimeout(() => reject(new Error(`TIMEOUT: Message processing for ${phone} exceeded ${TIMEOUT_MS}ms`)), TIMEOUT_MS)
       );
