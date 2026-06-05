@@ -2401,9 +2401,15 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       );
 
       // Support up to 15 chained function calls (matching generateResponseWithFunctions logic)
+      // Support up to 15 chained function calls (matching generateResponseWithFunctions logic)
       let currentResponse = result.response;
       let allFunctionCalls: any[] = [];
       let textContent = '';
+
+      const EXPLORATORY_FUNCTIONS = new Set([
+        'search_products', 'get_product_details', 'get_featured_products', 'get_all_products',
+      ]);
+      let consecutiveExploratoryCount = 0;
 
       for (let iteration = 0; iteration < 15; iteration++) {
         let functionCalls: any[] = [];
@@ -2431,12 +2437,32 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           break; // No more function calls, we are done
         }
 
+        const allExploratory = functionCalls.every((fc: any) => EXPLORATORY_FUNCTIONS.has(fc.name));
+        let interceptExploratory = false;
+        if (allExploratory) {
+          consecutiveExploratoryCount++;
+          if (consecutiveExploratoryCount >= 3) {
+            logger.warn(`Intercepting exploratory loop after ${iteration + 1} iterations in media mode`);
+            interceptExploratory = true;
+          }
+        } else {
+          consecutiveExploratoryCount = 0;
+        }
+
         logger.info(`Function calls from media message (iteration ${iteration + 1}): ${functionCalls.length}`);
         allFunctionCalls.push(...functionCalls);
 
         // Execute function calls
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
+            if (interceptExploratory && EXPLORATORY_FUNCTIONS.has(fc.name)) {
+               return {
+                 functionResponse: {
+                   name: fc.name,
+                   response: '[أمر صريح للنظام: توقف فوراً عن البحث! لقد وصلت للحد الأقصى المسموح به لمحاولات البحث المتتالية. توقف عن استدعاء الدوال الآن وأرسل الرد للعميل بالاعتماد على ما وجدته حتى الآن أو أخبره بأنك لم تجد طلبه]',
+                 }
+               };
+            }
             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
             const fnResult = await this.executeFunction(
               { name: fc.name, args: fc.args as Record<string, any> },

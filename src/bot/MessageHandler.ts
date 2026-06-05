@@ -245,7 +245,7 @@ export class MessageHandler {
         }
 
         // Handle empty text response (MED-1)
-        const replyText = response.text?.trim() || 'عذراً، لم أتمكن من معالجة طلبك. يرجى المحاولة مرة أخرى.';
+        const replyText = response.text?.trim() || 'يبدو أنني واجهت مشكلة في صياغة الرد المناسب. هل يمكنك توضيح ما تحتاجه بالضبط لكي أساعدك بأفضل شكل؟';
 
         // Send response to user
         if (this.sendMessageHandler) {
@@ -271,7 +271,7 @@ export class MessageHandler {
 
         // Send error message to user (only if not blocked) - MED-2 separate try/catch
         if (!blockedNumbersService.isBlocked(phone)) {
-          const errorMessage = 'عذراً، حدث خطأ في معالجة رسالتك. يرجى المحاولة مرة أخرى.';
+          const errorMessage = 'أعتذر منك، واجهت مشكلة تقنية بسيطة أثناء معالجة طلبك للتو. هل يمكنك إعادة إرسال رسالتك وسأقوم بمساعدتك فوراً؟ شكراً لتفهمك.';
           try {
             if (this.sendMessageHandler) {
               await this.sendMessageHandler(replyTo, errorMessage);
