@@ -2399,37 +2399,42 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         60000,
         'Gemini sendMessage media'
       );
-      const response = result.response;
 
-      // Check for function calls (same logic as generateResponseWithFunctions)
-      let functionCalls: any[] = [];
-      try {
-        if (typeof response.functionCalls === 'function') {
-          const calls = response.functionCalls();
-          if (calls && calls.length > 0) {
-            functionCalls = calls;
-          }
-        }
-      } catch (e) {
-        // Ignore
-      }
+      // Support up to 15 chained function calls (matching generateResponseWithFunctions logic)
+      let currentResponse = result.response;
+      let allFunctionCalls: any[] = [];
+      let textContent = '';
 
-      if (functionCalls.length === 0) {
+      for (let iteration = 0; iteration < 15; iteration++) {
+        let functionCalls: any[] = [];
+        
         try {
-          const responseParts = response.candidates?.[0]?.content?.parts || [];
-          const functionCallParts = responseParts.filter((part: any) => part.functionCall);
-          if (functionCallParts.length > 0) {
-            functionCalls = functionCallParts.map((part: any) => part.functionCall);
+          if (typeof currentResponse.functionCalls === 'function') {
+            const calls = currentResponse.functionCalls();
+            if (calls && calls.length > 0) {
+              functionCalls = calls;
+            }
           }
-        } catch (e) {
-          // Ignore
+        } catch (e) {}
+
+        if (functionCalls.length === 0) {
+          try {
+            const parts = currentResponse.candidates?.[0]?.content?.parts || [];
+            const functionCallParts = parts.filter((part: any) => part.functionCall);
+            if (functionCallParts.length > 0) {
+              functionCalls = functionCallParts.map((part: any) => part.functionCall);
+            }
+          } catch (e) {}
         }
-      }
 
-      // Execute function calls if any
-      if (functionCalls && functionCalls.length > 0) {
-        logger.info(`Function calls from media message: ${functionCalls.length}`);
+        if (functionCalls.length === 0) {
+          break; // No more function calls, we are done
+        }
 
+        logger.info(`Function calls from media message (iteration ${iteration + 1}): ${functionCalls.length}`);
+        allFunctionCalls.push(...functionCalls);
+
+        // Execute function calls
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
@@ -2470,15 +2475,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             60000,
             'Gemini sendMessage followUp media'
           );
-          const finalText = followUpResult.response.text();
-
-          return {
-            text: finalText,
-            functionCall: {
-              name: functionCalls[0].name,
-              args: functionCalls[0].args as Record<string, any>,
-            },
-          };
+          currentResponse = followUpResult.response;
         } catch (error: any) {
           logger.error('Error sending function response (media):', error);
           const functionResultText = functionResults
@@ -2491,16 +2488,48 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           return {
             text: functionResultText,
             functionCall: {
-              name: functionCalls[0].name,
-              args: functionCalls[0].args as Record<string, any>,
+              name: allFunctionCalls[0].name,
+              args: allFunctionCalls[0].args as Record<string, any>,
             },
           };
         }
       }
 
-      // No function calls - return text response
-      const responseText = response.text();
-      return { text: responseText };
+      // After all function calls (or if none), get the final text response
+      try {
+        textContent = currentResponse.text() || '';
+      } catch (e) {}
+
+      // If textContent is empty, provide a meaningful fallback based on function calls
+      if (!textContent) {
+        if (allFunctionCalls.length > 0) {
+          logger.warn(`Gemini returned empty text after ${allFunctionCalls.length} function calls in media mode`);
+          const lastFunc = allFunctionCalls[allFunctionCalls.length - 1];
+          if (lastFunc.name === 'search_products') {
+            textContent = 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
+          } else if (lastFunc.name === 'create_order') {
+            textContent = 'تم استلام طلبك وجاري معالجته بنجاح.';
+          } else if (lastFunc.name === 'initiate_payment') {
+            textContent = 'تم تجهيز رابط الدفع لطلبك.';
+          } else if (lastFunc.name === 'calculate_order_total') {
+            textContent = 'تم حساب تكلفة الطلب. يرجى تأكيد الطلب للبدء في تجهيزه.';
+          } else {
+            textContent = 'لقد قمت بتنفيذ طلبك، ولكن لم أتمكن من صياغة رد مناسب. يرجى التحقق أو إعادة المحاولة.';
+          }
+        }
+      }
+
+      if (allFunctionCalls.length > 0) {
+        return {
+          text: textContent,
+          functionCall: {
+            name: allFunctionCalls[0].name,
+            args: allFunctionCalls[0].args as Record<string, any>,
+          },
+        };
+      }
+
+      return { text: textContent };
     } catch (error: any) {
       logger.error(`Error generating Gemini response with media (fallback: ${useFallbackModel}):`, {
         status: error.status,
