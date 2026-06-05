@@ -124,7 +124,8 @@ export class GeminiService {
 ${catalogText}
 
 ملاحظة مهمة: هذه قائمة جزئية. إذا طلب العميل منتجاً غير موجود في القائمة أعلاه،
-استخدم دالة "search_products" للبحث عن المنتج بدلاً من افتراض عدم توفره.
+استخدم دالة "search_products" للبحث عن المنتج.
+⚠️ تحذير صارم جداً: لا تستخدم دالة البحث (search_products) أكثر من مرة أو مرتين كحد أقصى! إذا لم تجد المنتج، توقف فوراً عن البحث وأخبر العميل أن المنتج غير متوفر. ممنوع منعاً باتاً الدخول في دوامة بحث بكلمات مختلفة!
 `;
         // Update system prompt with new catalog
         this.systemPrompt = this.getSystemPrompt();
@@ -253,6 +254,11 @@ ${adminPromptSection}
 - لا تقل "تم تسجيل طلبك" أو "سيتم توصيل طلبك" بدون استخدام دالة create_order
 - الطلبات يتم إنشاؤها فقط من خلال دالة create_order - لا توجد طريقة أخرى
 - إذا لم تستخدم دالة create_order، لا يمكنك إنشاء الطلب - أخبر العميل بذلك بوضوح
+
+تحذير صارم لمنع التكرار اللانهائي (Infinite Loops):
+- لا تقم بتنفيذ أكثر من 3 دوال متسلسلة لخدمة نفس الطلب للعميل.
+- إذا كنت تبحث عن منتج باستخدام search_products ولم تجده، لا تبحث مرة أخرى بكلمات مختلفة أبداً! توقف وأخبر العميل.
+- لا تقع في فخ تكرار استدعاء نفس الدالة مرات عديدة بشكل متتالي. إذا لم تنجح من المرة الأولى أو الثانية، توقف وتحدث مع العميل.
 
 قائمة المنتجات المتاحة:
 ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
@@ -764,11 +770,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           try {
             const result = await productService.searchProducts(args.query || '', args.category);
             if (result.products.length === 0) {
-              return 'لم أجد منتجات تطابق البحث. يرجى المحاولة بكلمات أخرى.';
+              return 'لم أجد منتجات تطابق البحث. [أمر صريح للنظام: توقف تماماً عن البحث! لا تستخدم هذه الدالة مرة أخرى بكلمات مختلفة. قم بالرد على العميل مباشرة وأخبره بأن المنتج غير متوفر واطلب منه توضيح طلبه]';
             }
             const formattedList = productService.formatProductList(result.products);
             // Note: Don't save to order_data here - only save when customer explicitly requests a product
-            return formattedList;
+            return `تم العثور على المنتجات التالية:\n${formattedList}\n\n[أمر صريح للنظام: لقد حصلت على النتيجة بنجاح. توقف الآن عن استدعاء أي دوال أخرى! لا تقم بالبحث مرة أخرى. قم بالرد على العميل فوراً وأخبره بالنتيجة]`;
           } catch (error: any) {
             logger.error('Error in search_products function:', error);
             return `حدث خطأ أثناء البحث عن المنتجات: ${error.message || 'خطأ غير معروف'}`;
@@ -779,11 +785,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           try {
             const product = await productService.getProductById(args.product_id);
             if (!product) {
-              return 'لم أجد المنتج المطلوب.';
+              return 'لم أجد المنتج المطلوب. [أمر صريح للنظام: توقف ولا تستدعي دوال أخرى. أخبر العميل بذلك مباشرة]';
             }
             const formattedProduct = productService.formatProduct(product);
             // Note: Don't save to order_data here - only save when customer explicitly requests to add product
-            return formattedProduct;
+            return `تفاصيل المنتج:\n${formattedProduct}\n\n[أمر صريح للنظام: توقف الآن عن استدعاء أي دوال أخرى! قم بالرد على العميل مباشرة لعرض هذه التفاصيل]`;
           } catch (error: any) {
             logger.error('Error getting product details:', error);
             return `حدث خطأ في جلب تفاصيل المنتج: ${error.message || 'خطأ غير معروف'}`;
@@ -793,9 +799,9 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         case 'get_featured_products': {
           const products = await productService.getFeaturedProducts();
           if (products.length === 0) {
-            return 'لا توجد منتجات مميزة حالياً.';
+            return 'لا توجد منتجات مميزة حالياً. [أمر صريح للنظام: أخبر العميل بذلك مباشرة ولا تستدعي دوال أخرى]';
           }
-          return productService.formatProductList(products);
+          return `المنتجات المميزة:\n${productService.formatProductList(products)}\n\n[أمر صريح للنظام: توقف الآن عن استدعاء أي دوال إضافية! قم بالرد على العميل مباشرة لعرض هذه المنتجات المميزة]`;
         }
 
         case 'validate_discount_code': {
@@ -2034,12 +2040,19 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         'Gemini sendMessage'
       );
 
-      // Support up to 15 chained function calls
+      // Support up to 5 chained function calls (limit to prevent infinite loops)
+      const MAX_FUNCTION_ITERATIONS = 5;
       let currentResponse = result.response;
       let allFunctionCalls: any[] = [];
       let textContent = '';
 
-      for (let iteration = 0; iteration < 15; iteration++) {
+      // Track consecutive iterations of purely exploratory calls to break loops
+      const EXPLORATORY_FUNCTIONS = new Set([
+        'search_products', 'get_product_details', 'get_featured_products', 'get_all_products',
+      ]);
+      let consecutiveExploratoryCount = 0;
+
+      for (let iteration = 0; iteration < MAX_FUNCTION_ITERATIONS; iteration++) {
         let functionCalls: any[] = [];
         
         try {
@@ -2063,6 +2076,19 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
         if (functionCalls.length === 0) {
           break; // No more function calls, we are done
+        }
+
+        // Detect infinite loops: if every function in this iteration is
+        // an exploratory/read-only call, increment counter and break if ≥3
+        const allExploratory = functionCalls.every((fc: any) => EXPLORATORY_FUNCTIONS.has(fc.name));
+        if (allExploratory) {
+          consecutiveExploratoryCount++;
+          if (consecutiveExploratoryCount >= 3) {
+            logger.warn(`Breaking exploratory loop after ${iteration + 1} iterations (all ${EXPLORATORY_FUNCTIONS.size} type calls)`);
+            break;
+          }
+        } else {
+          consecutiveExploratoryCount = 0;
         }
 
         logger.info(`Function calls detected (iteration ${iteration + 1}): ${functionCalls.length}`);
@@ -2144,15 +2170,30 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         // text() can throw if response was blocked or empty
       }
 
-      if (!textContent && allFunctionCalls.length === 0) {
-        logger.warn('Gemini returned an empty response text with no function calls');
-        return { text: 'عذراً، لم أتمكن من استيعاب طلبك. يرجى إعادة صياغته مرة أخرى.' };
-      }
-
       // Check if response contains code blocks that look like function calls
       if (allFunctionCalls.length === 0) {
         if (textContent.includes('create_order') && textContent.includes('customer_name')) {
           logger.warn('Detected code output instead of function call. Response may need manual parsing.');
+        }
+      }
+
+      // If textContent is empty, provide a meaningful fallback based on function calls
+      if (!textContent) {
+        if (allFunctionCalls.length > 0) {
+          logger.warn(`Gemini returned empty text after ${allFunctionCalls.length} function calls`);
+          const lastFunc = allFunctionCalls[allFunctionCalls.length - 1];
+          if (lastFunc.name === 'search_products') {
+            textContent = 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
+          } else if (lastFunc.name === 'create_order') {
+            textContent = 'تم استلام طلبك وجاري معالجته بنجاح.';
+          } else if (lastFunc.name === 'initiate_payment') {
+            textContent = 'تم تجهيز رابط الدفع لطلبك.';
+          } else {
+            textContent = 'لقد قمت بتنفيذ طلبك، ولكن لم أتمكن من صياغة رد مناسب. يرجى التحقق أو إعادة المحاولة.';
+          }
+        } else {
+          logger.warn('Gemini returned an empty response text with no function calls');
+          return { text: 'عذراً، لم أتمكن من استيعاب طلبك. يرجى إعادة صياغته مرة أخرى.' };
         }
       }
 
