@@ -2,7 +2,6 @@ import { Message } from 'whatsapp-web.js';
 import { logger } from '../utils/logger';
 import { conversationManager } from './ConversationManager';
 import { geminiService } from '../services/GeminiService';
-import { whatsappBot } from './WhatsAppBot';
 import { blockedNumbersService } from '../services/BlockedNumbersService';
 import { rateLimiterService } from '../services/RateLimiterService';
 import { withTimeout } from '../utils/timeout';
@@ -22,6 +21,19 @@ export class MessageHandler {
   private processingQueue: Map<string, Promise<void>> = new Map();
   // Token system: every phone number has a token representing the current valid processing
   private processingTokens: Map<string, symbol> = new Map();
+  private sendMessageHandler?: (phone: string, text: string) => Promise<any>;
+  private sendTypingIndicatorHandler?: (phone: string) => Promise<any>;
+  private clearTypingIndicatorHandler?: (phone: string) => Promise<any>;
+
+  setWhatsAppBotInterface(handlers: {
+    sendMessage: (phone: string, text: string) => Promise<any>;
+    sendTypingIndicator: (phone: string) => Promise<any>;
+    clearTypingIndicator: (phone: string) => Promise<any>;
+  }) {
+    this.sendMessageHandler = handlers.sendMessage;
+    this.sendTypingIndicatorHandler = handlers.sendTypingIndicator;
+    this.clearTypingIndicatorHandler = handlers.clearTypingIndicator;
+  }
   private activeProcessingCount: number = 0;
   private readonly MAX_QUEUE_SIZE = 100; // DoS protection limit
 
@@ -65,7 +77,9 @@ export class MessageHandler {
         }
 
         // Send rate limit message using original chatId for direct @lid targeting
-        await whatsappBot.sendMessage(chatId, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.');
+        if (this.sendMessageHandler) {
+          await this.sendMessageHandler(chatId, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.');
+        }
         return;
       }
 
@@ -162,7 +176,9 @@ export class MessageHandler {
             const estimatedSize = Math.ceil(media.data.length * 0.75);
             if (estimatedSize > MAX_MEDIA_SIZE_BYTES) {
               logger.warn(`Media from ${phone} too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB), skipping`);
-              await whatsappBot.sendMessage(replyTo, 'عذراً، حجم الملف كبير جداً. يرجى إرسال ملف أصغر (الحد الأقصى 10 ميجابايت).');
+              if (this.sendMessageHandler) {
+                await this.sendMessageHandler(replyTo, 'عذراً، حجم الملف كبير جداً. يرجى إرسال ملف أصغر (الحد الأقصى 10 ميجابايت).');
+              }
               return;
             }
 
@@ -185,14 +201,16 @@ export class MessageHandler {
         ? (userMessage ? `[وسائط: ${msg?.type}] ${userMessage}` : `[وسائط: ${msg?.type}]`)
         : userMessage;
 
-      // Add user message to conversation
-      conversationManager.addMessage(phone, 'user', messageForHistory || '[وسائط]');
+      // 1. Send typing indicator
+      if (this.sendTypingIndicatorHandler) {
+        await this.sendTypingIndicatorHandler(replyTo);
+      }
 
-      // Send typing indicator
-      await whatsappBot.sendTypingIndicator(replyTo);
-
-      // Get conversation history
+      // 2. Get conversation history before adding current message
       const conversationHistory = conversationManager.getFullConversationHistory(phone);
+
+      // 3. Add user message to conversation
+      conversationManager.addMessage(phone, 'user', messageForHistory || '[وسائط]');
 
       // Get current order data from conversation
       const conversation = conversationManager.getConversationContext(phone);
@@ -222,13 +240,20 @@ export class MessageHandler {
         }
 
         // Clear typing indicator before sending message
-        await whatsappBot.clearTypingIndicator(replyTo);
+        if (this.clearTypingIndicatorHandler) {
+          await this.clearTypingIndicatorHandler(replyTo);
+        }
+
+        // Handle empty text response (MED-1)
+        const replyText = response.text?.trim() || 'عذراً، لم أتمكن من معالجة طلبك. يرجى المحاولة مرة أخرى.';
 
         // Send response to user
-        await whatsappBot.sendMessage(replyTo, response.text);
+        if (this.sendMessageHandler) {
+          await this.sendMessageHandler(replyTo, replyText);
+        }
 
         // Add assistant message to conversation
-        conversationManager.addMessage(phone, 'assistant', response.text);
+        conversationManager.addMessage(phone, 'assistant', replyText);
 
         // If function was called (like create_order), handle additional tasks
         // Note: The actual function execution is done in GeminiService
@@ -240,13 +265,25 @@ export class MessageHandler {
         logger.error('Error generating response:', error);
 
         // Clear typing indicator in case of error
-        await whatsappBot.clearTypingIndicator(replyTo);
+        if (this.clearTypingIndicatorHandler) {
+          await this.clearTypingIndicatorHandler(replyTo);
+        }
 
-        // Send error message to user (only if not blocked)
+        // Send error message to user (only if not blocked) - MED-2 separate try/catch
         if (!blockedNumbersService.isBlocked(phone)) {
           const errorMessage = 'عذراً، حدث خطأ في معالجة رسالتك. يرجى المحاولة مرة أخرى.';
-          await whatsappBot.sendMessage(replyTo, errorMessage);
-          conversationManager.addMessage(phone, 'assistant', errorMessage);
+          try {
+            if (this.sendMessageHandler) {
+              await this.sendMessageHandler(replyTo, errorMessage);
+            }
+          } catch (sendError) {
+            logger.error('Failed to send error message to user:', sendError);
+          }
+          try {
+            conversationManager.addMessage(phone, 'assistant', errorMessage);
+          } catch (addError) {
+            logger.error('Failed to add error message to conversation:', addError);
+          }
         }
       }
     } catch (error) {

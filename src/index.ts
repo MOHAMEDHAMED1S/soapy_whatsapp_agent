@@ -137,6 +137,14 @@ const main = async () => {
     logger.info('Starting automatic product catalog updates (every 30 minutes)...');
     geminiService.startAutoUpdate();
 
+    // MED-5: Dependency Injection to resolve circular dependency
+    whatsappBot.setMessageHandler((msg) => messageHandler.handleMessage(msg));
+    messageHandler.setWhatsAppBotInterface({
+      sendMessage: (phone, text) => whatsappBot.sendMessage(phone, text),
+      sendTypingIndicator: (phone) => whatsappBot.sendTypingIndicator(phone),
+      clearTypingIndicator: (phone) => whatsappBot.clearTypingIndicator(phone),
+    });
+
     // Initialize WhatsApp bot (this is blocking and required)
     await whatsappBot.initialize();
 

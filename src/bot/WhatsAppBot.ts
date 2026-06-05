@@ -1,7 +1,6 @@
 import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
 import { logger } from '../utils/logger';
-import { messageHandler } from './MessageHandler';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
@@ -110,6 +109,9 @@ export class WhatsAppBot {
       // Stop health check during reconnection
       this.stopHealthCheck();
 
+      // MED-3 fix: Clear typing sessions before reconnecting
+      this.clearAllTypingSessions();
+
       // Trigger auto-reconnect
       await this.reconnect();
     });
@@ -132,7 +134,11 @@ export class WhatsAppBot {
         logger.debug(`Message from: ${msg.from}, type: ${typeof msg.from}`);
 
         // Process message
-        await messageHandler.handleMessage(msg);
+        if (this.onMessageReceived) {
+          await this.onMessageReceived(msg);
+        } else {
+          logger.warn('Message received but no handler configured');
+        }
       } catch (error) {
         logger.error('Error handling message:', error);
       }
@@ -172,12 +178,18 @@ export class WhatsAppBot {
     this.removeBrowserLockFiles();
 
     try {
-      // Kill any orphaned chromium/chrome processes related to our session
-      // This is safe because we haven't started our own browser yet
-      execSync('pkill -f "chromium.*wwebjs_auth" || true', { stdio: 'ignore' });
-      execSync('pkill -f "chrome.*wwebjs_auth" || true', { stdio: 'ignore' });
-      execSync('pkill -f "Google Chrome.*wwebjs_auth" || true', { stdio: 'ignore' });
-      execSync('pkill -f "Chromium.*wwebjs_auth" || true', { stdio: 'ignore' });
+      // LOW-1 fix: Add Windows support for cleaning stale browsers
+      if (process.platform === 'win32') {
+        execSync('taskkill /F /IM chrome.exe /T 2>nul || ver >nul', { stdio: 'ignore' });
+        execSync('taskkill /F /IM chromium.exe /T 2>nul || ver >nul', { stdio: 'ignore' });
+      } else {
+        // Kill any orphaned chromium/chrome processes related to our session
+        // This is safe because we haven't started our own browser yet
+        execSync('pkill -f "chromium.*wwebjs_auth" || true', { stdio: 'ignore' });
+        execSync('pkill -f "chrome.*wwebjs_auth" || true', { stdio: 'ignore' });
+        execSync('pkill -f "Google Chrome.*wwebjs_auth" || true', { stdio: 'ignore' });
+        execSync('pkill -f "Chromium.*wwebjs_auth" || true', { stdio: 'ignore' });
+      }
       logger.info('Cleaned up orphaned browser processes');
     } catch (err: any) {
       // pkill may fail on some systems or if no processes found - that's fine
@@ -253,6 +265,8 @@ export class WhatsAppBot {
   }
 
   // Track last disconnected time to debounce rapid re-triggers
+  private onMessageReceived?: (msg: Message) => Promise<void>;
+
   private lastDisconnectedTime: number = 0;
   private readonly DISCONNECT_DEBOUNCE_MS = 10000; // ignore if fired within 10s of last
 
@@ -606,6 +620,10 @@ export class WhatsAppBot {
     return this.isReady;
   }
 
+  setMessageHandler(handler: (msg: Message) => Promise<void>): void {
+    this.onMessageReceived = handler;
+  }
+
   // Get client instance
   getClient(): Client {
     return this.client;
@@ -626,16 +644,21 @@ export class WhatsAppBot {
     execSync('sleep 1 || timeout /T 1 >nul 2>&1 || true', { stdio: 'ignore' });
   }
 
+  // Clear all active typing sessions
+  clearAllTypingSessions(): void {
+    this.typingSessions.forEach((session) => {
+      clearInterval(session.interval);
+    });
+    this.typingSessions.clear();
+  }
+
   // Destroy the bot
   async destroy(): Promise<void> {
     try {
       this.stopHealthCheck();
 
       // Clear all typing intervals
-      this.typingSessions.forEach((session) => {
-        clearInterval(session.interval);
-      });
-      this.typingSessions.clear();
+      this.clearAllTypingSessions();
 
       if (!this.client) {
         this.isReady = false;

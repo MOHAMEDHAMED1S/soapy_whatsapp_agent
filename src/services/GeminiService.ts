@@ -1,9 +1,10 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { productService } from './ProductService';
 import { apiService } from './ApiService';
 import { conversationRepository } from '../database/ConversationRepository';
+import { withTimeout } from '../utils/timeout';
 
 export interface FunctionCall {
   name: string;
@@ -51,6 +52,25 @@ export class GeminiService {
     if (systemInstruction) {
       modelConfig.systemInstruction = systemInstruction;
     }
+
+    modelConfig.safetySettings = [
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+    ];
 
     return this.genAI.getGenerativeModel(modelConfig);
   }
@@ -1966,6 +1986,24 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           topP: 0.95,
           maxOutputTokens: 2048,
         },
+        safetySettings: [
+          {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+        ],
         systemInstruction: systemPrompt, // supports string systemInstruction
         tools: [
           {
@@ -1989,8 +2027,12 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         history: validHistory,
       });
 
-      // Send user message
-      const result = await chat.sendMessage(userMessage);
+      // Send user message with timeout
+      const result = await withTimeout(
+        chat.sendMessage(userMessage),
+        60000,
+        'Gemini sendMessage'
+      );
       const response = result.response;
 
       // Check if function call was made (gemini-2.5-pro function calling)
@@ -2022,10 +2064,23 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         }
       }
 
+      // Check if text is empty and no functions were called
+      let textContent = '';
+      try {
+        textContent = response.text() || '';
+      } catch (e) {
+        // text() can throw if response was blocked or empty
+      }
+
+      if (!textContent && functionCalls.length === 0) {
+        logger.warn('Gemini returned an empty response text with no function calls');
+        return { text: 'عذراً، لم أتمكن من استيعاب طلبك. يرجى إعادة صياغته مرة أخرى.' };
+      }
+
       // Method 3: Check if response contains code blocks that look like function calls
       // This is a fallback if Gemini tries to write code instead of using function calling
       if (functionCalls.length === 0) {
-        const responseText = response.text();
+        const responseText = textContent;
         // Check if response contains code that looks like create_order call
         if (responseText.includes('create_order') && responseText.includes('customer_name')) {
           logger.warn('Detected code output instead of function call. Response may need manual parsing.');
@@ -2094,7 +2149,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           });
 
           // Send function responses back to the chat
-          const followUpResult = await chat.sendMessage(functionResponseParts);
+          const followUpResult = await withTimeout(
+            chat.sendMessage(functionResponseParts),
+            60000,
+            'Gemini sendMessage followUp'
+          );
           const finalText = followUpResult.response.text();
 
           return {
@@ -2251,6 +2310,24 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           topP: 0.95,
           maxOutputTokens: 2048,
         },
+        safetySettings: [
+          {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+        ],
         systemInstruction: systemPrompt,
         tools: [
           {
@@ -2296,7 +2373,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       logger.info(`Sending multimodal request to Gemini: ${mediaData.mimeType}, text: ${(userMessage || '[auto-prompt]').substring(0, 50)}`);
 
       // Send multimodal message
-      const result = await chat.sendMessage(parts);
+      const result = await withTimeout(
+        chat.sendMessage(parts),
+        60000,
+        'Gemini sendMessage media'
+      );
       const response = result.response;
 
       // Check for function calls (same logic as generateResponseWithFunctions)
@@ -2363,7 +2444,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             };
           });
 
-          const followUpResult = await chat.sendMessage(functionResponseParts);
+          const followUpResult = await withTimeout(
+            chat.sendMessage(functionResponseParts),
+            60000,
+            'Gemini sendMessage followUp media'
+          );
           const finalText = followUpResult.response.text();
 
           return {
