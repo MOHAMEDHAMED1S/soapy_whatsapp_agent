@@ -12,17 +12,64 @@ export interface RateLimitConfig {
 export class RateLimiterService {
   private db = databaseManager.getDatabase();
 
+  // In-memory fallback rate limiter
+  private inMemoryCounts: Map<string, { count: number; windowStart: number }> = new Map();
+  private lastCleanup: number = Date.now();
+  private readonly CLEANUP_INTERVAL_MS = 60000;
+
   // Default configuration
   private config: RateLimitConfig = {
-    maxMessagesPerMinute: 100, // Maximum 5 messages per minute
-    maxMessagesPerWindow: 1000, // Maximum 10 messages per window
-    windowSizeMinutes: 10, // 5 minute window
+    maxMessagesPerMinute: Number(process.env.RATE_LIMIT_PER_MINUTE) || 20,
+    maxMessagesPerWindow: Number(process.env.RATE_LIMIT_PER_WINDOW) || 100,
+    windowSizeMinutes: Number(process.env.RATE_LIMIT_WINDOW_MINUTES) || 5,
     autoBlockThreshold: 3, // Auto-block after 3 violations
   };
 
   // Check if a message should be allowed
   async checkRateLimit(phone: string): Promise<{ allowed: boolean; reason?: string }> {
     try {
+      return await this.checkRateLimitDb(phone);
+    } catch (error) {
+      logger.error('Rate limit DB failed, using in-memory fallback:', error);
+      this.periodicCleanup();
+      return this.checkRateLimitMemory(phone);
+    }
+  }
+
+  private periodicCleanup(): void {
+    const now = Date.now();
+    if (now - this.lastCleanup < this.CLEANUP_INTERVAL_MS) return;
+    this.lastCleanup = now;
+    const threshold = now - 120000; // Keep only last 2 minutes
+    for (const [phone, record] of this.inMemoryCounts.entries()) {
+      if (record.windowStart < threshold) {
+        this.inMemoryCounts.delete(phone);
+      }
+    }
+  }
+
+  private checkRateLimitMemory(phone: string): { allowed: boolean; reason?: string } {
+    const now = Date.now();
+    const record = this.inMemoryCounts.get(phone);
+
+    if (!record || (now - record.windowStart) > 60000) {
+      this.inMemoryCounts.set(phone, { count: 1, windowStart: now });
+      return { allowed: true };
+    }
+
+    record.count++;
+    if (record.count > this.config.maxMessagesPerMinute) {
+      logger.warn(`In-memory rate limit exceeded for ${phone}: ${record.count} msgs/min`);
+      return {
+        allowed: false,
+        reason: 'تم تجاوز الحد المسموح من الرسائل. يرجى الانتظار.',
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  private async checkRateLimitDb(phone: string): Promise<{ allowed: boolean; reason?: string }> {
       const now = new Date();
       const windowStart = new Date(now.getTime() - this.config.windowSizeMinutes * 60 * 1000);
 
@@ -107,11 +154,6 @@ export class RateLimiterService {
 
       logger.debug(`Rate limit check passed for phone: ${phone}, count: ${tracking.message_count + 1}`);
       return { allowed: true };
-    } catch (error) {
-      logger.error('Error checking rate limit:', error);
-      // Allow message on error to avoid blocking legitimate users
-      return { allowed: true };
-    }
   }
 
   // Record a rate limit violation

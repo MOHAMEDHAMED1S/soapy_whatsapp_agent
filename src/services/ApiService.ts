@@ -377,6 +377,29 @@ export class ApiService {
     }
   }
 
+  // Create order (Safe variant that does not throw)
+  async createOrderSafe(request: CreateOrderRequest): Promise<ApiResponse<CreateOrderResponse>> {
+    try {
+      const orderPayload = {
+        ...request,
+        from_whatsapp: true
+      };
+      const response = await this.client.post<ApiResponse<CreateOrderResponse>>(
+        '/checkout/create-order',
+        orderPayload
+      );
+      return response.data;
+    } catch (error: any) {
+      logger.error('Error creating order:', error.message);
+      return {
+        success: false,
+        message: error.response?.data?.message || error.message || 'Failed to create order',
+        errors: error.response?.data?.errors,
+        data: {} as CreateOrderResponse,
+      };
+    }
+  }
+
   // Get payment methods
   async getPaymentMethods(): Promise<ApiResponse<PaymentMethodsResponse>> {
     try {
@@ -403,6 +426,27 @@ export class ApiService {
     } catch (error: any) {
       logger.error('Error initiating payment:', error);
       throw new Error(`Failed to initiate payment: ${error.message}`);
+    }
+  }
+
+  // Initiate payment (Safe variant that does not throw)
+  async initiatePaymentSafe(
+    request: InitiatePaymentRequest
+  ): Promise<ApiResponse<InitiatePaymentResponse>> {
+    try {
+      const response = await this.client.post<ApiResponse<InitiatePaymentResponse>>(
+        '/payments/initiate',
+        request
+      );
+      return response.data;
+    } catch (error: any) {
+      logger.error('Error initiating payment:', error.message);
+      return {
+        success: false,
+        message: error.response?.data?.message || error.message || 'Failed to initiate payment',
+        errors: error.response?.data?.errors,
+        data: {} as InitiatePaymentResponse,
+      };
     }
   }
 

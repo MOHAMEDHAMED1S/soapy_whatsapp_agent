@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start": "node --unhandled-rejections=strict dist/index.js",
+    "dev": "node --unhandled-rejections=strict -r ts-node/register src/index.ts",
     "watch": "tsc --watch"
   },
   "keywords": [

@@ -5,6 +5,7 @@ import { geminiService } from '../services/GeminiService';
 import { whatsappBot } from './WhatsAppBot';
 import { blockedNumbersService } from '../services/BlockedNumbersService';
 import { rateLimiterService } from '../services/RateLimiterService';
+import { withTimeout } from '../utils/timeout';
 
 // Media data interface for passing downloaded media to Gemini
 export interface MediaData {
@@ -19,7 +20,10 @@ const MAX_MEDIA_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 export class MessageHandler {
   // Queue for processing messages (one at a time per phone number)
   private processingQueue: Map<string, Promise<void>> = new Map();
+  // Token system: every phone number has a token representing the current valid processing
+  private processingTokens: Map<string, symbol> = new Map();
   private activeProcessingCount: number = 0;
+  private readonly MAX_QUEUE_SIZE = 100; // DoS protection limit
 
   // Extract phone number from WhatsApp message
   private extractPhoneNumber(from: string): string {
@@ -65,28 +69,59 @@ export class MessageHandler {
         return;
       }
 
+      // DoS protection: max queue size
+      if (this.processingQueue.size >= this.MAX_QUEUE_SIZE) {
+        logger.warn(`Queue full (${this.MAX_QUEUE_SIZE}), message from ${phone} dropped`);
+        return;
+      }
+
+      // Create unique token for this processing
+      const currentToken = Symbol(phone);
+
       // Check if there's already a message being processed for this phone
       // If so, wait for it to complete before processing the new message
       const existingPromise = this.processingQueue.get(phone);
       if (existingPromise) {
         logger.debug(`Message from ${phone} is queued - waiting for previous message to complete`);
         try {
-          await existingPromise;
+          await withTimeout(existingPromise, 30000, 'Waiting for previous message');
         } catch (error) {
           logger.error(`Error waiting for previous message from ${phone}:`, error);
         }
       }
 
       this.activeProcessingCount++;
-      const processPromise = this.processMessage(phone, userMessage, chatId, msg);
+      const processPromise = this.processMessage(phone, userMessage, chatId, msg)
+        .finally(() => {
+          // Check if this processing is still valid
+          if (this.processingTokens.get(phone) === currentToken) {
+            this.processingQueue.delete(phone);
+            this.processingTokens.delete(phone);
+            this.activeProcessingCount = Math.max(0, this.activeProcessingCount - 1);
+          }
+        });
+
+      // Register token as "currently valid"
+      this.processingTokens.set(phone, currentToken);
       this.processingQueue.set(phone, processPromise);
 
+      // Timeout to prevent hanging forever
+      const TIMEOUT_MS = 60000;
+      const timeoutPromise = new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error(`TIMEOUT: Message processing for ${phone} exceeded ${TIMEOUT_MS}ms`)), TIMEOUT_MS)
+      );
+
       try {
-        await processPromise;
-      } finally {
-        // Remove from queue when done
-        this.processingQueue.delete(phone);
-        this.activeProcessingCount = Math.max(0, this.activeProcessingCount - 1);
+        await Promise.race([processPromise, timeoutPromise]);
+      } catch (error: any) {
+        // Invalidate token - this processing is no longer valid
+        // If it completes later, finally block will see token is different and won't clean up
+        if (this.processingTokens.get(phone) === currentToken) {
+            this.processingTokens.delete(phone);
+            this.processingQueue.delete(phone);
+            this.activeProcessingCount = Math.max(0, this.activeProcessingCount - 1);
+        }
+        logger.error(`Timeout or error processing message from ${phone}:`, error.message);
       }
     } catch (error) {
       logger.error('Error handling message:', error);

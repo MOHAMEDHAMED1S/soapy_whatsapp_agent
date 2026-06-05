@@ -5,6 +5,7 @@ import { messageHandler } from './MessageHandler';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { withTimeout } from '../utils/timeout';
 
 export class WhatsAppBot {
   private client: Client;
@@ -610,10 +611,24 @@ export class WhatsAppBot {
     return this.client;
   }
 
+  private killBrowserProcesses(): void {
+    // قتل جميع عمليات Chromium المرتبطة بهذه الجلسة
+    if (process.platform === 'win32') {
+      execSync(`taskkill /F /FI "WINDOWTITLE eq wwebjs_auth" /T 2>nul || ver >nul`, { stdio: 'ignore' });
+    } else {
+      // استخدام SIGKILL (9) بدلاً من SIGTERM (15) للقتل الفوري
+      execSync(`pkill -9 -f "chromium.*wwebjs_auth" || true`, { stdio: 'ignore' });
+      execSync(`pkill -9 -f "chrome.*wwebjs_auth" || true`, { stdio: 'ignore' });
+      execSync(`pkill -9 -f "Google Chrome.*wwebjs_auth" || true`, { stdio: 'ignore' });
+      execSync(`pkill -9 -f "Chromium.*wwebjs_auth" || true`, { stdio: 'ignore' });
+    }
+    // انتظر قليلاً للتأكد من انتهاء العمليات
+    execSync('sleep 1 || timeout /T 1 >nul 2>&1 || true', { stdio: 'ignore' });
+  }
+
   // Destroy the bot
   async destroy(): Promise<void> {
     try {
-      // Stop health check
       this.stopHealthCheck();
 
       // Clear all typing intervals
@@ -630,28 +645,36 @@ export class WhatsAppBot {
         return;
       }
 
-      // Explicitly close browser process if it exists (fix for zombie processes)
+      let browserClosed = false;
       try {
         const clientAny = this.client as any;
         if (clientAny.pupBrowser) {
-          logger.info('Found active browser instance, forcing close...');
-          const pages = await clientAny.pupBrowser.pages();
-          await Promise.all(pages.map((page: any) => page.close()));
-          await clientAny.pupBrowser.close();
+          logger.info('Found active browser instance, closing gracefully...');
+          await withTimeout(
+            clientAny.pupBrowser.close(),
+            5000,
+            'Puppeteer browser.close()'
+          );
+          browserClosed = true;
           logger.info('Browser instance closed successfully');
         }
-      } catch (browserError: any) {
-        logger.warn('Error cleaning up browser instance:', browserError.message);
+        await withTimeout(
+            this.client.destroy(),
+            10000,
+            'WhatsApp client.destroy()'
+        );
+      } catch (closeError: any) {
+        logger.warn('Graceful close timed out or failed, force killing browser:', closeError.message);
       }
 
-      try {
-        await this.client.destroy();
-      } catch (clientDestroyError: any) {
-        logger.warn('Error in client.destroy():', clientDestroyError.message);
+      if (!browserClosed) {
+        try {
+          this.killBrowserProcesses();
+        } catch (killError) {
+          logger.error('Failed to kill browser process:', killError);
+        }
       }
 
-      // Remove lock files *after* the browser is closed so the next
-      // startup doesn't see a stale lock from this session.
       this.removeBrowserLockFiles();
 
       this.isReady = false;
@@ -660,6 +683,8 @@ export class WhatsAppBot {
       logger.info('WhatsApp bot destroyed');
     } catch (error) {
       logger.error('Error destroying WhatsApp bot:', error);
+      try { this.killBrowserProcesses(); } catch {}
+      try { this.removeBrowserLockFiles(); } catch {}
       throw error;
     }
   }

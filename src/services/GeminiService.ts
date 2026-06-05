@@ -22,6 +22,15 @@ export class GeminiService {
   private updateInterval: NodeJS.Timeout | null = null;
   private readonly UPDATE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
   private updateInProgress: boolean = false;
+  private readonly MAX_PRODUCTS_IN_PROMPT = 50;
+
+  private pendingOrders: Map<string, {
+    phone: string;
+    orderId?: number;
+    data?: any;
+    status: 'creating' | 'pending' | 'failed';
+    createdAt: number;
+  }> = new Map();
 
   constructor() {
     this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
@@ -58,7 +67,9 @@ export class GeminiService {
       logger.info('Updating product catalog...');
       const products = await productService.getAllProducts(forceRefresh);
       if (products.length > 0) {
-        const catalogText = products
+        // Limit the number of products in the prompt to avoid context bloating
+        const limitedProducts = products.slice(0, this.MAX_PRODUCTS_IN_PROMPT);
+        const catalogText = limitedProducts
           .map((p) => {
             const name = p.title || p.name_ar || p.name_en || p.name || `منتج ${p.id}`;
             const currency = p.currency || 'د.ك';
@@ -88,10 +99,16 @@ export class GeminiService {
           })
           .join('\n');
 
-        this.productCatalog = catalogText;
+        this.productCatalog = `
+قائمة المنتجات المتاحة (${limitedProducts.length} من أصل ${products.length}):
+${catalogText}
+
+ملاحظة مهمة: هذه قائمة جزئية. إذا طلب العميل منتجاً غير موجود في القائمة أعلاه،
+استخدم دالة "search_products" للبحث عن المنتج بدلاً من افتراض عدم توفره.
+`;
         // Update system prompt with new catalog
         this.systemPrompt = this.getSystemPrompt();
-        logger.info(`Product catalog updated for Gemini with ${products.length} products`);
+        logger.info(`Product catalog updated for Gemini with ${limitedProducts.length} out of ${products.length} products`);
       } else {
         this.productCatalog = 'لا توجد منتجات متاحة حالياً. يرجى المحاولة لاحقاً.';
         this.systemPrompt = this.getSystemPrompt();
@@ -119,6 +136,30 @@ export class GeminiService {
       this.updateProductCatalog(true).catch((error) => {
         logger.error('Error in auto-update of product catalog:', error);
       });
+
+      // Restore pending orders
+      const now = Date.now();
+      for (const [key, pending] of this.pendingOrders.entries()) {
+          // Orders older than 30 minutes - try to save one last time
+          if (pending.status === 'pending' && (now - pending.createdAt) > 1800000) {
+              if (pending.orderId && pending.data) {
+                  try {
+                      conversationRepository.saveOrder(
+                          pending.orderId,
+                          pending.phone,
+                          pending.data,
+                          undefined,
+                          'pending'
+                      );
+                      this.pendingOrders.delete(key);
+                      logger.info(`Successfully restored pending order ${pending.orderId} from memory`);
+                  } catch (e) {
+                      logger.error(`Failed to restore pending order ${pending.orderId}, dropping it:`, e);
+                      this.pendingOrders.delete(key);
+                  }
+              }
+          }
+      }
     }, this.UPDATE_INTERVAL_MS);
 
     logger.info(`Started automatic product catalog updates every ${this.UPDATE_INTERVAL_MS / 60000} minutes`);
@@ -1217,7 +1258,15 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               quantity: item.quantity,
             }));
 
-            const orderResponse = await apiService.createOrder({
+            // Create pending record before API call
+            const pendingKey = `${customerPhoneNumber}_${Date.now()}`;
+            this.pendingOrders.set(pendingKey, {
+                phone: customerPhoneNumber,
+                status: 'creating',
+                createdAt: Date.now(),
+            });
+
+            const orderResponse = await apiService.createOrderSafe({
               customer_name: args.customer_name,
               customer_phone: customerPhoneNumber, // Use phone number provided by customer
               customer_email: customerEmail,
@@ -1249,7 +1298,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
                 if (firstMethod) {
                   // Initiate payment
-                  const paymentResponse = await apiService.initiatePayment({
+                  const paymentResponse = await apiService.initiatePaymentSafe({
                     order_id: orderData.order.id,
                     payment_method: firstMethod.PaymentMethodCode,
                     customer_ip: config.customer.ip,
@@ -1257,14 +1306,26 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                   });
 
                   if (paymentResponse.success) {
-                    // Save order to database
-                    conversationRepository.saveOrder(
-                      orderData.order.id,
-                      customerPhone,
-                      orderData,
-                      paymentResponse.data.payment_url,
-                      'payment_pending'
-                    );
+                    try {
+                      // Save order to database
+                      conversationRepository.saveOrder(
+                        orderData.order.id,
+                        customerPhone,
+                        orderData,
+                        paymentResponse.data.payment_url,
+                        'payment_pending'
+                      );
+                      this.pendingOrders.delete(pendingKey);
+                    } catch (saveError) {
+                      this.pendingOrders.set(pendingKey, {
+                          phone: customerPhoneNumber,
+                          orderId: orderData.order.id,
+                          data: orderData,
+                          status: 'pending',
+                          createdAt: Date.now(),
+                      });
+                      logger.error('DB save failed after payment success, order kept in memory:', saveError);
+                    }
 
                     // Format order details based on actual API response
                     const order = orderData.order;
@@ -1346,14 +1407,26 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                 }
               }
 
-              // Save order to database even if payment initiation fails
-              conversationRepository.saveOrder(
-                orderData.order.id,
-                customerPhone,
-                orderData,
-                undefined,
-                'pending'
-              );
+              try {
+                // Save order to database even if payment initiation fails
+                conversationRepository.saveOrder(
+                  orderData.order.id,
+                  customerPhone,
+                  orderData,
+                  undefined,
+                  'pending'
+                );
+                this.pendingOrders.delete(pendingKey);
+              } catch (saveError) {
+                this.pendingOrders.set(pendingKey, {
+                    phone: customerPhoneNumber,
+                    orderId: orderData.order.id,
+                    data: orderData,
+                    status: 'pending',
+                    createdAt: Date.now(),
+                });
+                logger.error('DB save failed, order kept in memory:', saveError);
+              }
 
               // Format order details even if payment initiation fails
               const order = orderData.order;
@@ -1428,6 +1501,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             }
 
             // Handle API error response
+            this.pendingOrders.delete(pendingKey);
             const errorMsg = orderResponse.message || 'حدث خطأ في إنشاء الطلب';
             if (orderResponse.errors) {
               const errorDetails = Object.values(orderResponse.errors).flat().join(', ');
@@ -1435,7 +1509,15 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             }
             return `حدث خطأ في إنشاء الطلب: ${errorMsg}`;
           } catch (error: any) {
-            logger.error('Error creating order:', error);
+            logger.error('Fatal Error creating order:', error);
+            // We don't delete the pendingKey here so we could trace it if needed.
+            // But we mark it as failed
+            const currentPendingKey = `${customerPhone}_${Date.now()}`;
+            this.pendingOrders.set(currentPendingKey, {
+                phone: customerPhone,
+                status: 'failed',
+                createdAt: Date.now(),
+            });
             return `حدث خطأ في إنشاء الطلب: ${error.message || 'خطأ غير معروف'}. يرجى المحاولة مرة أخرى.`;
           }
         }

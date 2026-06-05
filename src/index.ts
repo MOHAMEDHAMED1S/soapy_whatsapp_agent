@@ -9,9 +9,9 @@ import { messageHandler } from './bot/MessageHandler';
 let restartTimer: NodeJS.Timeout | null = null;
 let isRestarting = false;
 
-// Graceful shutdown handler
 const shutdown = async (signal: string) => {
   logger.info(`Received ${signal}, shutting down gracefully...`);
+  let exitCode = 0;
   
   try {
     if (restartTimer) {
@@ -22,12 +22,19 @@ const shutdown = async (signal: string) => {
     geminiService.stopAutoUpdate();
     
     await whatsappBot.destroy();
-    databaseManager.close();
-    logger.info('Shutdown complete');
-    process.exit(0);
+    logger.info('WhatsApp bot destroyed');
   } catch (error) {
     logger.error('Error during shutdown:', error);
-    process.exit(1);
+    exitCode = 1;
+  } finally {
+    try {
+      databaseManager.close();
+      logger.info('Database closed');
+    } catch (dbError) {
+      logger.error('Error closing database:', dbError);
+      exitCode = 1;
+    }
+    process.exit(exitCode);
   }
 };
 
@@ -41,6 +48,7 @@ const restartProcess = async (reason: string) => {
     restartTimer = null;
   }
   logger.info(`Restarting process (${reason})...`);
+  let exitCode = 0;
   try {
     const drainTimeoutRaw = process.env.RESTART_DRAIN_TIMEOUT_MS || '20000';
     const drainTimeoutMs = Number(drainTimeoutRaw);
@@ -52,19 +60,22 @@ const restartProcess = async (reason: string) => {
     }
     geminiService.stopAutoUpdate();
     await whatsappBot.destroy();
-    databaseManager.close();
+  } catch (error) {
+    logger.error('Error during restart cleanup:', error);
+    exitCode = 1;
+  } finally {
+    try {
+      databaseManager.close();
+    } catch (dbError) {
+      logger.error('Error closing database during restart:', dbError);
+      exitCode = 1;
+    }
 
     // Brief delay to ensure all OS-level file handles are released
     // before PM2 starts a new instance.
     await new Promise(resolve => setTimeout(resolve, 1000));
-  } catch (error) {
-    logger.error('Error during restart cleanup:', error);
+    process.exit(exitCode);
   }
-
-  // Exit gracefully — PM2 (or other process manager) will restart the app.
-  // Using spawn() here would create orphaned processes that hold the browser lock,
-  // causing "browser already running" errors on the next startup.
-  process.exit(0);
 };
 
 const scheduleAutoRestart = () => {
@@ -86,12 +97,17 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // Handle uncaught errors
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught exception:', error);
-  shutdown('uncaughtException');
+  try {
+    process.stderr.write(`UNCAUGHT EXCEPTION: ${error.stack || error}\n`);
+  } catch {}
+  process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled rejection at:', promise, 'reason:', reason);
+process.on('unhandledRejection', (reason) => {
+  try {
+    process.stderr.write(`UNHANDLED REJECTION: ${reason}\n`);
+  } catch {}
+  process.exit(1);
 });
 
 // Main function
