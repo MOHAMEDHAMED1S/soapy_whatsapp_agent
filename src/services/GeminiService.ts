@@ -2097,10 +2097,12 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
             if (interceptExploratory && EXPLORATORY_FUNCTIONS.has(fc.name)) {
+               const mockResponse = '[أمر صريح للنظام: توقف فوراً عن البحث! لقد وصلت للحد الأقصى المسموح به لمحاولات البحث المتتالية. توقف عن استدعاء الدوال الآن وأرسل الرد للعميل بالاعتماد على ما وجدته حتى الآن أو أخبره بأنك لم تجد طلبه]';
+               fc.result = mockResponse;
                return {
                  functionResponse: {
                    name: fc.name,
-                   response: '[أمر صريح للنظام: توقف فوراً عن البحث! لقد وصلت للحد الأقصى المسموح به لمحاولات البحث المتتالية. توقف عن استدعاء الدوال الآن وأرسل الرد للعميل بالاعتماد على ما وجدته حتى الآن أو أخبره بأنك لم تجد طلبه]',
+                   response: mockResponse,
                  }
                };
             }
@@ -2112,6 +2114,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               },
               customerPhone
             );
+            fc.result = funcResult;
             return {
               functionResponse: {
                 name: fc.name,
