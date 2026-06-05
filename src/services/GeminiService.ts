@@ -1286,7 +1286,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
                 createdAt: Date.now(),
             });
 
-            const orderResponse = await apiService.createOrderSafe({
+            const orderResponse = await apiService.createOrder({
               customer_name: args.customer_name,
               customer_phone: customerPhoneNumber, // Use phone number provided by customer
               customer_email: customerEmail,
@@ -1318,7 +1318,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
 
                 if (firstMethod) {
                   // Initiate payment
-                  const paymentResponse = await apiService.initiatePaymentSafe({
+                  const paymentResponse = await apiService.initiatePayment({
                     order_id: orderData.order.id,
                     payment_method: firstMethod.PaymentMethodCode,
                     customer_ip: config.customer.ip,

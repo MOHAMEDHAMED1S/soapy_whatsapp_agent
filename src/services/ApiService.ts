@@ -1,6 +1,17 @@
 import axios, { AxiosInstance } from 'axios';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
+
+export type ApiErrorCategory = 'network' | 'timeout' | 'server' | 'client' | 'unknown';
+
+export function classifyApiError(error: any): ApiErrorCategory {
+  if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') return 'network';
+  if (error.code === 'ETIMEDOUT' || error.code === 'ESOCKETTIMEDOUT' || error.code === 'ECONNABORTED') return 'timeout';
+  if (error.response?.status >= 500) return 'server';
+  if (error.response?.status >= 400) return 'client';
+  return 'unknown';
+}
+
 import {
   ApiResponse,
   GetProductsParams,
@@ -358,27 +369,7 @@ export class ApiService {
   }
 
   // Create order
-  async createOrder(request: CreateOrderRequest): Promise<ApiResponse<CreateOrderResponse>> {
-    try {
-      // Automatically add from_whatsapp flag
-      const orderPayload = {
-        ...request,
-        from_whatsapp: true
-      };
-
-      const response = await this.client.post<ApiResponse<CreateOrderResponse>>(
-        '/checkout/create-order',
-        orderPayload
-      );
-      return response.data;
-    } catch (error: any) {
-      logger.error('Error creating order:', error);
-      throw new Error(`Failed to create order: ${error.message}`);
-    }
-  }
-
-  // Create order (Safe variant that does not throw)
-  async createOrderSafe(request: CreateOrderRequest): Promise<ApiResponse<CreateOrderResponse>> {
+  async createOrder(request: CreateOrderRequest, retryCount = 0): Promise<ApiResponse<CreateOrderResponse>> {
     try {
       const orderPayload = {
         ...request,
@@ -390,7 +381,16 @@ export class ApiService {
       );
       return response.data;
     } catch (error: any) {
-      logger.error('Error creating order:', error.message);
+      const errorCategory = classifyApiError(error);
+      logger.error(`Error creating order [${errorCategory}]:`, error.message);
+      
+      // Retry for network and timeout errors (up to 2 times)
+      if ((errorCategory === 'network' || errorCategory === 'timeout') && retryCount < 2) {
+        logger.warn(`Retrying createOrder (attempt ${retryCount + 1})...`);
+        await new Promise(res => setTimeout(res, 1000 * (retryCount + 1))); // exponential backoff
+        return this.createOrder(request, retryCount + 1);
+      }
+
       return {
         success: false,
         message: error.response?.data?.message || error.message || 'Failed to create order',
@@ -415,7 +415,8 @@ export class ApiService {
 
   // Initiate payment
   async initiatePayment(
-    request: InitiatePaymentRequest
+    request: InitiatePaymentRequest,
+    retryCount = 0
   ): Promise<ApiResponse<InitiatePaymentResponse>> {
     try {
       const response = await this.client.post<ApiResponse<InitiatePaymentResponse>>(
@@ -424,23 +425,16 @@ export class ApiService {
       );
       return response.data;
     } catch (error: any) {
-      logger.error('Error initiating payment:', error);
-      throw new Error(`Failed to initiate payment: ${error.message}`);
-    }
-  }
+      const errorCategory = classifyApiError(error);
+      logger.error(`Error initiating payment [${errorCategory}]:`, error.message);
 
-  // Initiate payment (Safe variant that does not throw)
-  async initiatePaymentSafe(
-    request: InitiatePaymentRequest
-  ): Promise<ApiResponse<InitiatePaymentResponse>> {
-    try {
-      const response = await this.client.post<ApiResponse<InitiatePaymentResponse>>(
-        '/payments/initiate',
-        request
-      );
-      return response.data;
-    } catch (error: any) {
-      logger.error('Error initiating payment:', error.message);
+      // Retry for network and timeout errors (up to 2 times)
+      if ((errorCategory === 'network' || errorCategory === 'timeout') && retryCount < 2) {
+        logger.warn(`Retrying initiatePayment (attempt ${retryCount + 1})...`);
+        await new Promise(res => setTimeout(res, 1000 * (retryCount + 1))); // exponential backoff
+        return this.initiatePayment(request, retryCount + 1);
+      }
+
       return {
         success: false,
         message: error.response?.data?.message || error.message || 'Failed to initiate payment',
