@@ -192,32 +192,62 @@ export class WhatsAppBot {
 
   // Initialize the bot
   async initialize(): Promise<void> {
-    try {
-      // Clean up any stale browser processes/locks from previous crashes
-      await this.cleanupStaleBrowser();
+    let initAttempts = 0;
+    const maxInitAttempts = 3;
 
-      // Create the client *after* cleanup so the browser isn't started
-      // while old lock files or processes are still around.
-      this.client = this.createClient();
-      this.setupEventHandlers();
+    while (initAttempts < maxInitAttempts) {
+      try {
+        // Clean up any stale browser processes/locks from previous crashes
+        await this.cleanupStaleBrowser();
 
-      logger.info('Initializing WhatsApp bot...');
-      logger.info('Please wait while connecting to WhatsApp Web...');
-      await this.client.initialize();
+        // Create the client *after* cleanup so the browser isn't started
+        // while old lock files or processes are still around.
+        this.client = this.createClient();
+        this.setupEventHandlers();
 
-      // Start health check after successful initialization
-      this.startHealthCheck();
-    } catch (error: any) {
-      if (error.name === 'TimeoutError') {
-        logger.error('Timeout while initializing WhatsApp bot. This may happen if:');
-        logger.error('1. No internet connection');
-        logger.error('2. WhatsApp Web is blocked');
-        logger.error('3. Firewall is blocking the connection');
-        logger.error('Please check your connection and try again.');
-      } else {
-        logger.error('Error initializing WhatsApp bot:', error.message || error);
+        logger.info(`Initializing WhatsApp bot... (Attempt ${initAttempts + 1}/${maxInitAttempts})`);
+        logger.info('Please wait while connecting to WhatsApp Web...');
+        await this.client.initialize();
+
+        // Start health check after successful initialization
+        this.startHealthCheck();
+        return; // Success, exit the retry loop
+      } catch (error: any) {
+        initAttempts++;
+        if (error.name === 'TimeoutError') {
+          logger.error('Timeout while initializing WhatsApp bot. This may happen if:');
+          logger.error('1. No internet connection');
+          logger.error('2. WhatsApp Web is blocked');
+          logger.error('3. Firewall is blocking the connection');
+        } else {
+          logger.error(`Error initializing WhatsApp bot (Attempt ${initAttempts}):`, error.message || error);
+        }
+
+        // If we have reached the max attempts, throw the error
+        if (initAttempts >= maxInitAttempts) {
+          logger.error('Max initialization attempts reached. Failing...');
+          throw error;
+        }
+
+        // Otherwise, destroy the client, wait, and try again
+        try {
+          if (this.client) {
+            // Explicitly close browser process if it exists
+            const clientAny = this.client as any;
+            if (clientAny.pupBrowser) {
+              const pages = await clientAny.pupBrowser.pages();
+              await Promise.all(pages.map((page: any) => page.close()));
+              await clientAny.pupBrowser.close();
+            }
+            await this.client.destroy();
+          }
+        } catch (destroyError: any) {
+          logger.warn('Error destroying client during initialization retry:', destroyError.message);
+        }
+        
+        logger.info('Waiting 3 seconds before retrying initialization...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
-      throw error;
     }
   }
 
