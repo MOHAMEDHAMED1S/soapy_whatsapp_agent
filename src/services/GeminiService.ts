@@ -2045,12 +2045,7 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       let currentResponse = result.response;
       let allFunctionCalls: any[] = [];
       let textContent = '';
-
-      // Track consecutive iterations of purely exploratory calls to break loops
-      const EXPLORATORY_FUNCTIONS = new Set([
-        'search_products', 'get_product_details', 'get_featured_products', 'get_all_products',
-      ]);
-      let consecutiveExploratoryCount = 0;
+      let lastFunctionResults: string[] = [];
 
       for (let iteration = 0; iteration < MAX_FUNCTION_ITERATIONS; iteration++) {
         let functionCalls: any[] = [];
@@ -2078,34 +2073,12 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           break; // No more function calls, we are done
         }
 
-        const allExploratory = functionCalls.every((fc: any) => EXPLORATORY_FUNCTIONS.has(fc.name));
-        let interceptExploratory = false;
-        if (allExploratory) {
-          consecutiveExploratoryCount++;
-          if (consecutiveExploratoryCount >= 3) {
-            logger.warn(`Intercepting exploratory loop after ${iteration + 1} iterations`);
-            interceptExploratory = true;
-          }
-        } else {
-          consecutiveExploratoryCount = 0;
-        }
-
         logger.info(`Function calls detected (iteration ${iteration + 1}): ${functionCalls.length}`);
         allFunctionCalls.push(...functionCalls);
 
         // Execute function calls
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
-            if (interceptExploratory && EXPLORATORY_FUNCTIONS.has(fc.name)) {
-               const mockResponse = '[أمر صريح للنظام: توقف فوراً عن البحث! لقد وصلت للحد الأقصى المسموح به لمحاولات البحث المتتالية. توقف عن استدعاء الدوال الآن وأرسل الرد للعميل بالاعتماد على ما وجدته حتى الآن أو أخبره بأنك لم تجد طلبه]';
-               fc.result = mockResponse;
-               return {
-                 functionResponse: {
-                   name: fc.name,
-                   response: mockResponse,
-                 }
-               };
-            }
             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
             const funcResult = await this.executeFunction(
               {
@@ -2114,14 +2087,14 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
               },
               customerPhone
             );
-            fc.result = funcResult;
+            lastFunctionResults.push(typeof funcResult === 'string' ? funcResult : JSON.stringify(funcResult));
             return {
               functionResponse: {
                 name: fc.name,
                 response: funcResult,
               },
             };
-          })
+            })
         );
 
         // Send function results back to model using chat
@@ -2176,8 +2149,18 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       // After all function calls (or if none), get the final text response
       try {
         textContent = currentResponse.text() || '';
-      } catch (e) {
-        // text() can throw if response was blocked or empty
+      } catch (e: any) {
+        textContent = '';
+        if (e.message?.includes('blocked') || e.message?.includes('Blocked') ||
+            currentResponse?.promptFeedback?.blockReason ||
+            currentResponse?.candidates?.[0]?.finishReason) {
+          const blockReason = currentResponse?.promptFeedback?.blockReason
+            || currentResponse?.candidates?.[0]?.finishReason
+            || 'UNKNOWN';
+          logger.warn(`Gemini response blocked: ${blockReason}`, e.message);
+        } else {
+          logger.warn('Gemini text() threw:', e.message);
+        }
       }
 
       // Check if response contains code blocks that look like function calls
@@ -2192,8 +2175,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         if (allFunctionCalls.length > 0) {
           logger.warn(`Gemini returned empty text after ${allFunctionCalls.length} function calls`);
           const lastFunc = allFunctionCalls[allFunctionCalls.length - 1];
-          if (lastFunc.name === 'search_products') {
-            textContent = 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
+          if (lastFunc.name === 'search_products' || lastFunc.name === 'get_product_details') {
+            const results = lastFunctionResults.filter(r => !r.includes('[أمر صريح للنظام'));
+            textContent = results.length > 0
+              ? results.join('\n\n')
+              : 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
           } else if (lastFunc.name === 'create_order') {
             textContent = 'تم استلام طلبك وجاري معالجته بنجاح.';
           } else if (lastFunc.name === 'initiate_payment') {
@@ -2202,6 +2188,11 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
             textContent = 'لقد قمت بتنفيذ طلبك، ولكن لم أتمكن من صياغة رد مناسب. يرجى التحقق أو إعادة المحاولة.';
           }
         } else {
+          const blockInfo = currentResponse?.promptFeedback?.blockReason || currentResponse?.candidates?.[0]?.finishReason;
+          if (blockInfo) {
+            logger.warn(`Gemini blocked response: ${blockInfo}`);
+            return { text: `عذراً، لم أتمكن من معالجة طلبك بسبب سياسات المحتوى. يرجى إعادة صياغة رسالتك بطريقة مختلفة.` };
+          }
           logger.warn('Gemini returned an empty response text with no function calls');
           return { text: 'عذراً، لم أتمكن من استيعاب طلبك. يرجى إعادة صياغته مرة أخرى.' };
         }
@@ -2410,18 +2401,13 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
         'Gemini sendMessage media'
       );
 
-      // Support up to 15 chained function calls (matching generateResponseWithFunctions logic)
-      // Support up to 15 chained function calls (matching generateResponseWithFunctions logic)
+      // Support up to 5 chained function calls (limit to prevent infinite loops)
       let currentResponse = result.response;
       let allFunctionCalls: any[] = [];
       let textContent = '';
+      let lastFunctionResults: string[] = [];
 
-      const EXPLORATORY_FUNCTIONS = new Set([
-        'search_products', 'get_product_details', 'get_featured_products', 'get_all_products',
-      ]);
-      let consecutiveExploratoryCount = 0;
-
-      for (let iteration = 0; iteration < 15; iteration++) {
+      for (let iteration = 0; iteration < 5; iteration++) {
         let functionCalls: any[] = [];
         
         try {
@@ -2447,37 +2433,18 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
           break; // No more function calls, we are done
         }
 
-        const allExploratory = functionCalls.every((fc: any) => EXPLORATORY_FUNCTIONS.has(fc.name));
-        let interceptExploratory = false;
-        if (allExploratory) {
-          consecutiveExploratoryCount++;
-          if (consecutiveExploratoryCount >= 3) {
-            logger.warn(`Intercepting exploratory loop after ${iteration + 1} iterations in media mode`);
-            interceptExploratory = true;
-          }
-        } else {
-          consecutiveExploratoryCount = 0;
-        }
-
         logger.info(`Function calls from media message (iteration ${iteration + 1}): ${functionCalls.length}`);
         allFunctionCalls.push(...functionCalls);
 
         // Execute function calls
         const functionResults = await Promise.all(
           functionCalls.map(async (fc: any) => {
-            if (interceptExploratory && EXPLORATORY_FUNCTIONS.has(fc.name)) {
-               return {
-                 functionResponse: {
-                   name: fc.name,
-                   response: '[أمر صريح للنظام: توقف فوراً عن البحث! لقد وصلت للحد الأقصى المسموح به لمحاولات البحث المتتالية. توقف عن استدعاء الدوال الآن وأرسل الرد للعميل بالاعتماد على ما وجدته حتى الآن أو أخبره بأنك لم تجد طلبه]',
-                 }
-               };
-            }
             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
             const fnResult = await this.executeFunction(
               { name: fc.name, args: fc.args as Record<string, any> },
               customerPhone
             );
+            lastFunctionResults.push(typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult));
             return {
               functionResponse: {
                 name: fc.name,
@@ -2534,15 +2501,30 @@ WhatsApp لا يدعم Markdown بشكل كامل. يجب أن ترسل جميع
       // After all function calls (or if none), get the final text response
       try {
         textContent = currentResponse.text() || '';
-      } catch (e) {}
+      } catch (e: any) {
+        textContent = '';
+        if (e.message?.includes('blocked') || e.message?.includes('Blocked') ||
+            currentResponse?.promptFeedback?.blockReason ||
+            currentResponse?.candidates?.[0]?.finishReason) {
+          const blockReason = currentResponse?.promptFeedback?.blockReason
+            || currentResponse?.candidates?.[0]?.finishReason
+            || 'UNKNOWN';
+          logger.warn(`Gemini media response blocked: ${blockReason}`, e.message);
+        } else {
+          logger.warn('Gemini media text() threw:', e.message);
+        }
+      }
 
       // If textContent is empty, provide a meaningful fallback based on function calls
       if (!textContent) {
         if (allFunctionCalls.length > 0) {
           logger.warn(`Gemini returned empty text after ${allFunctionCalls.length} function calls in media mode`);
           const lastFunc = allFunctionCalls[allFunctionCalls.length - 1];
-          if (lastFunc.name === 'search_products') {
-            textContent = 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
+          if (lastFunc.name === 'search_products' || lastFunc.name === 'get_product_details') {
+            const results = lastFunctionResults.filter(r => !r.includes('[أمر صريح للنظام'));
+            textContent = results.length > 0
+              ? results.join('\n\n')
+              : 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
           } else if (lastFunc.name === 'create_order') {
             textContent = 'تم استلام طلبك وجاري معالجته بنجاح.';
           } else if (lastFunc.name === 'initiate_payment') {

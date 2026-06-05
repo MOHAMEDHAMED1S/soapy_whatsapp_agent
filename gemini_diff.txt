@@ -1,0 +1,816 @@
+--- /Users/md/Documents/Github/soapy_whatsapp_agent/soapy_whatsapp_agent-7f32b8f7f036d00b2ca9e458be1812f87b046350/src/services/GeminiService.ts	2026-05-21 15:23:11
++++ /Users/md/Documents/Github/soapy_whatsapp_agent/src/services/GeminiService.ts	2026-06-05 06:31:17
+@@ -1,9 +1,10 @@
+-import { GoogleGenerativeAI } from '@google/generative-ai';
++import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+ import { config } from '../config/config';
+ import { logger } from '../utils/logger';
+ import { productService } from './ProductService';
+ import { apiService } from './ApiService';
+ import { conversationRepository } from '../database/ConversationRepository';
++import { withTimeout } from '../utils/timeout';
+ 
+ export interface FunctionCall {
+   name: string;
+@@ -22,7 +23,16 @@
+   private updateInterval: NodeJS.Timeout | null = null;
+   private readonly UPDATE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+   private updateInProgress: boolean = false;
++  private readonly MAX_PRODUCTS_IN_PROMPT = 50;
+ 
++  private pendingOrders: Map<string, {
++    phone: string;
++    orderId?: number;
++    data?: any;
++    status: 'creating' | 'pending' | 'failed';
++    createdAt: number;
++  }> = new Map();
++
+   constructor() {
+     this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
+   }
+@@ -43,6 +53,25 @@
+       modelConfig.systemInstruction = systemInstruction;
+     }
+ 
++    modelConfig.safetySettings = [
++      {
++        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
++        threshold: HarmBlockThreshold.BLOCK_NONE,
++      },
++      {
++        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
++        threshold: HarmBlockThreshold.BLOCK_NONE,
++      },
++      {
++        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
++        threshold: HarmBlockThreshold.BLOCK_NONE,
++      },
++      {
++        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
++        threshold: HarmBlockThreshold.BLOCK_NONE,
++      },
++    ];
++
+     return this.genAI.getGenerativeModel(modelConfig);
+   }
+ 
+@@ -58,7 +87,9 @@
+       logger.info('Updating product catalog...');
+       const products = await productService.getAllProducts(forceRefresh);
+       if (products.length > 0) {
+-        const catalogText = products
++        // Limit the number of products in the prompt to avoid context bloating
++        const limitedProducts = products.slice(0, this.MAX_PRODUCTS_IN_PROMPT);
++        const catalogText = limitedProducts
+           .map((p) => {
+             const name = p.title || p.name_ar || p.name_en || p.name || `منتج ${p.id}`;
+             const currency = p.currency || 'د.ك';
+@@ -88,10 +119,17 @@
+           })
+           .join('\n');
+ 
+-        this.productCatalog = catalogText;
++        this.productCatalog = `
++قائمة المنتجات المتاحة (${limitedProducts.length} من أصل ${products.length}):
++${catalogText}
++
++ملاحظة مهمة: هذه قائمة جزئية. إذا طلب العميل منتجاً غير موجود في القائمة أعلاه،
++استخدم دالة "search_products" للبحث عن المنتج.
++⚠️ تحذير صارم جداً: لا تستخدم دالة البحث (search_products) أكثر من مرة أو مرتين كحد أقصى! إذا لم تجد المنتج، توقف فوراً عن البحث وأخبر العميل أن المنتج غير متوفر. ممنوع منعاً باتاً الدخول في دوامة بحث بكلمات مختلفة!
++`;
+         // Update system prompt with new catalog
+         this.systemPrompt = this.getSystemPrompt();
+-        logger.info(`Product catalog updated for Gemini with ${products.length} products`);
++        logger.info(`Product catalog updated for Gemini with ${limitedProducts.length} out of ${products.length} products`);
+       } else {
+         this.productCatalog = 'لا توجد منتجات متاحة حالياً. يرجى المحاولة لاحقاً.';
+         this.systemPrompt = this.getSystemPrompt();
+@@ -119,6 +157,30 @@
+       this.updateProductCatalog(true).catch((error) => {
+         logger.error('Error in auto-update of product catalog:', error);
+       });
++
++      // Restore pending orders
++      const now = Date.now();
++      for (const [key, pending] of this.pendingOrders.entries()) {
++          // Orders older than 30 minutes - try to save one last time
++          if (pending.status === 'pending' && (now - pending.createdAt) > 1800000) {
++              if (pending.orderId && pending.data) {
++                  try {
++                      conversationRepository.saveOrder(
++                          pending.orderId,
++                          pending.phone,
++                          pending.data,
++                          undefined,
++                          'pending'
++                      );
++                      this.pendingOrders.delete(key);
++                      logger.info(`Successfully restored pending order ${pending.orderId} from memory`);
++                  } catch (e) {
++                      logger.error(`Failed to restore pending order ${pending.orderId}, dropping it:`, e);
++                      this.pendingOrders.delete(key);
++                  }
++              }
++          }
++      }
+     }, this.UPDATE_INTERVAL_MS);
+ 
+     logger.info(`Started automatic product catalog updates every ${this.UPDATE_INTERVAL_MS / 60000} minutes`);
+@@ -192,6 +254,11 @@
+ - لا تقل "تم تسجيل طلبك" أو "سيتم توصيل طلبك" بدون استخدام دالة create_order
+ - الطلبات يتم إنشاؤها فقط من خلال دالة create_order - لا توجد طريقة أخرى
+ - إذا لم تستخدم دالة create_order، لا يمكنك إنشاء الطلب - أخبر العميل بذلك بوضوح
++
++تحذير صارم لمنع التكرار اللانهائي (Infinite Loops):
++- لا تقم بتنفيذ أكثر من 3 دوال متسلسلة لخدمة نفس الطلب للعميل.
++- إذا كنت تبحث عن منتج باستخدام search_products ولم تجده، لا تبحث مرة أخرى بكلمات مختلفة أبداً! توقف وأخبر العميل.
++- لا تقع في فخ تكرار استدعاء نفس الدالة مرات عديدة بشكل متتالي. إذا لم تنجح من المرة الأولى أو الثانية، توقف وتحدث مع العميل.
+ 
+ قائمة المنتجات المتاحة:
+ ${this.productCatalog || 'جارٍ تحميل قائمة المنتجات...'}
+@@ -703,11 +770,11 @@
+           try {
+             const result = await productService.searchProducts(args.query || '', args.category);
+             if (result.products.length === 0) {
+-              return 'لم أجد منتجات تطابق البحث. يرجى المحاولة بكلمات أخرى.';
++              return 'لم أجد منتجات تطابق البحث. [أمر صريح للنظام: توقف تماماً عن البحث! لا تستخدم هذه الدالة مرة أخرى بكلمات مختلفة. قم بالرد على العميل مباشرة وأخبره بأن المنتج غير متوفر واطلب منه توضيح طلبه]';
+             }
+             const formattedList = productService.formatProductList(result.products);
+             // Note: Don't save to order_data here - only save when customer explicitly requests a product
+-            return formattedList;
++            return `تم العثور على المنتجات التالية:\n${formattedList}\n\n[أمر صريح للنظام: لقد حصلت على النتيجة بنجاح. توقف الآن عن استدعاء أي دوال أخرى! لا تقم بالبحث مرة أخرى. قم بالرد على العميل فوراً وأخبره بالنتيجة]`;
+           } catch (error: any) {
+             logger.error('Error in search_products function:', error);
+             return `حدث خطأ أثناء البحث عن المنتجات: ${error.message || 'خطأ غير معروف'}`;
+@@ -718,11 +785,11 @@
+           try {
+             const product = await productService.getProductById(args.product_id);
+             if (!product) {
+-              return 'لم أجد المنتج المطلوب.';
++              return 'لم أجد المنتج المطلوب. [أمر صريح للنظام: توقف ولا تستدعي دوال أخرى. أخبر العميل بذلك مباشرة]';
+             }
+             const formattedProduct = productService.formatProduct(product);
+             // Note: Don't save to order_data here - only save when customer explicitly requests to add product
+-            return formattedProduct;
++            return `تفاصيل المنتج:\n${formattedProduct}\n\n[أمر صريح للنظام: توقف الآن عن استدعاء أي دوال أخرى! قم بالرد على العميل مباشرة لعرض هذه التفاصيل]`;
+           } catch (error: any) {
+             logger.error('Error getting product details:', error);
+             return `حدث خطأ في جلب تفاصيل المنتج: ${error.message || 'خطأ غير معروف'}`;
+@@ -732,9 +799,9 @@
+         case 'get_featured_products': {
+           const products = await productService.getFeaturedProducts();
+           if (products.length === 0) {
+-            return 'لا توجد منتجات مميزة حالياً.';
++            return 'لا توجد منتجات مميزة حالياً. [أمر صريح للنظام: أخبر العميل بذلك مباشرة ولا تستدعي دوال أخرى]';
+           }
+-          return productService.formatProductList(products);
++          return `المنتجات المميزة:\n${productService.formatProductList(products)}\n\n[أمر صريح للنظام: توقف الآن عن استدعاء أي دوال إضافية! قم بالرد على العميل مباشرة لعرض هذه المنتجات المميزة]`;
+         }
+ 
+         case 'validate_discount_code': {
+@@ -1217,6 +1284,14 @@
+               quantity: item.quantity,
+             }));
+ 
++            // Create pending record before API call
++            const pendingKey = `${customerPhoneNumber}_${Date.now()}`;
++            this.pendingOrders.set(pendingKey, {
++                phone: customerPhoneNumber,
++                status: 'creating',
++                createdAt: Date.now(),
++            });
++
+             const orderResponse = await apiService.createOrder({
+               customer_name: args.customer_name,
+               customer_phone: customerPhoneNumber, // Use phone number provided by customer
+@@ -1257,14 +1332,26 @@
+                   });
+ 
+                   if (paymentResponse.success) {
+-                    // Save order to database
+-                    conversationRepository.saveOrder(
+-                      orderData.order.id,
+-                      customerPhone,
+-                      orderData,
+-                      paymentResponse.data.payment_url,
+-                      'payment_pending'
+-                    );
++                    try {
++                      // Save order to database
++                      conversationRepository.saveOrder(
++                        orderData.order.id,
++                        customerPhone,
++                        orderData,
++                        paymentResponse.data.payment_url,
++                        'payment_pending'
++                      );
++                      this.pendingOrders.delete(pendingKey);
++                    } catch (saveError) {
++                      this.pendingOrders.set(pendingKey, {
++                          phone: customerPhoneNumber,
++                          orderId: orderData.order.id,
++                          data: orderData,
++                          status: 'pending',
++                          createdAt: Date.now(),
++                      });
++                      logger.error('DB save failed after payment success, order kept in memory:', saveError);
++                    }
+ 
+                     // Format order details based on actual API response
+                     const order = orderData.order;
+@@ -1346,14 +1433,26 @@
+                 }
+               }
+ 
+-              // Save order to database even if payment initiation fails
+-              conversationRepository.saveOrder(
+-                orderData.order.id,
+-                customerPhone,
+-                orderData,
+-                undefined,
+-                'pending'
+-              );
++              try {
++                // Save order to database even if payment initiation fails
++                conversationRepository.saveOrder(
++                  orderData.order.id,
++                  customerPhone,
++                  orderData,
++                  undefined,
++                  'pending'
++                );
++                this.pendingOrders.delete(pendingKey);
++              } catch (saveError) {
++                this.pendingOrders.set(pendingKey, {
++                    phone: customerPhoneNumber,
++                    orderId: orderData.order.id,
++                    data: orderData,
++                    status: 'pending',
++                    createdAt: Date.now(),
++                });
++                logger.error('DB save failed, order kept in memory:', saveError);
++              }
+ 
+               // Format order details even if payment initiation fails
+               const order = orderData.order;
+@@ -1428,6 +1527,7 @@
+             }
+ 
+             // Handle API error response
++            this.pendingOrders.delete(pendingKey);
+             const errorMsg = orderResponse.message || 'حدث خطأ في إنشاء الطلب';
+             if (orderResponse.errors) {
+               const errorDetails = Object.values(orderResponse.errors).flat().join(', ');
+@@ -1435,7 +1535,15 @@
+             }
+             return `حدث خطأ في إنشاء الطلب: ${errorMsg}`;
+           } catch (error: any) {
+-            logger.error('Error creating order:', error);
++            logger.error('Fatal Error creating order:', error);
++            // We don't delete the pendingKey here so we could trace it if needed.
++            // But we mark it as failed
++            const currentPendingKey = `${customerPhone}_${Date.now()}`;
++            this.pendingOrders.set(currentPendingKey, {
++                phone: customerPhone,
++                status: 'failed',
++                createdAt: Date.now(),
++            });
+             return `حدث خطأ في إنشاء الطلب: ${error.message || 'خطأ غير معروف'}. يرجى المحاولة مرة أخرى.`;
+           }
+         }
+@@ -1884,6 +1992,24 @@
+           topP: 0.95,
+           maxOutputTokens: 2048,
+         },
++        safetySettings: [
++          {
++            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++          {
++            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++          {
++            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++          {
++            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++        ],
+         systemInstruction: systemPrompt, // supports string systemInstruction
+         tools: [
+           {
+@@ -1907,100 +2033,82 @@
+         history: validHistory,
+       });
+ 
+-      // Send user message
+-      const result = await chat.sendMessage(userMessage);
+-      const response = result.response;
+-
+-      // Check if function call was made (gemini-2.5-pro function calling)
+-      // Try multiple ways to get function calls
+-      let functionCalls: any[] = [];
++      // Send user message with timeout
++      const result = await withTimeout(
++        chat.sendMessage(userMessage),
++        60000,
++        'Gemini sendMessage'
++      );
+ 
+-      try {
+-        // Method 1: response.functionCalls() if available
+-        if (typeof response.functionCalls === 'function') {
+-          const calls = response.functionCalls();
+-          if (calls && calls.length > 0) {
+-            functionCalls = calls;
+-          }
+-        }
+-      } catch (e) {
+-        // Ignore
+-      }
++      // Support up to 5 chained function calls (limit to prevent infinite loops)
++      const MAX_FUNCTION_ITERATIONS = 5;
++      let currentResponse = result.response;
++      let allFunctionCalls: any[] = [];
++      let textContent = '';
++      let lastFunctionResults: string[] = [];
+ 
+-      // Method 2: Check response.candidates for function calls
+-      if (functionCalls.length === 0) {
++      for (let iteration = 0; iteration < MAX_FUNCTION_ITERATIONS; iteration++) {
++        let functionCalls: any[] = [];
++        
+         try {
+-          const parts = response.candidates?.[0]?.content?.parts || [];
+-          const functionCallParts = parts.filter((part: any) => part.functionCall);
+-          if (functionCallParts.length > 0) {
+-            functionCalls = functionCallParts.map((part: any) => part.functionCall);
+-          }
+-        } catch (e) {
+-          // Ignore
+-        }
+-      }
++          if (typeof currentResponse.functionCalls === 'function') {
++            const calls = currentResponse.functionCalls();
++            if (calls && calls.length > 0) {
++              functionCalls = calls;
++            }
++          }
++        } catch (e) {}
+ 
+-      // Method 3: Check if response contains code blocks that look like function calls
+-      // This is a fallback if Gemini tries to write code instead of using function calling
+-      if (functionCalls.length === 0) {
+-        const responseText = response.text();
+-        // Check if response contains code that looks like create_order call
+-        if (responseText.includes('create_order') && responseText.includes('customer_name')) {
+-          logger.warn('Detected code output instead of function call. Response may need manual parsing.');
+-          // Don't try to parse - let it fail and user will see the issue
++        if (functionCalls.length === 0) {
++          try {
++            const parts = currentResponse.candidates?.[0]?.content?.parts || [];
++            const functionCallParts = parts.filter((part: any) => part.functionCall);
++            if (functionCallParts.length > 0) {
++              functionCalls = functionCallParts.map((part: any) => part.functionCall);
++            }
++          } catch (e) {}
+         }
+-      }
+ 
+-      if (functionCalls && functionCalls.length > 0) {
+-        logger.info(`Function calls detected: ${functionCalls.length}`);
++        if (functionCalls.length === 0) {
++          break; // No more function calls, we are done
++        }
+ 
++        logger.info(`Function calls detected (iteration ${iteration + 1}): ${functionCalls.length}`);
++        allFunctionCalls.push(...functionCalls);
++
+         // Execute function calls
+         const functionResults = await Promise.all(
+           functionCalls.map(async (fc: any) => {
+             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
+-            const result = await this.executeFunction(
++            const funcResult = await this.executeFunction(
+               {
+                 name: fc.name,
+                 args: fc.args as Record<string, any>,
+               },
+               customerPhone
+             );
++            lastFunctionResults.push(typeof funcResult === 'string' ? funcResult : JSON.stringify(funcResult));
+             return {
+               functionResponse: {
+                 name: fc.name,
+-                response: result,
++                response: funcResult,
+               },
+             };
+-          })
++            })
+         );
+ 
+         // Send function results back to model using chat
+         try {
+-          // Build function response parts for gemini-2.5-pro
+-          // IMPORTANT: function_response.response must be a Struct (object), not a string
+-          // The response should be a plain JSON object that can be serialized
+           const functionResponseParts = functionResults.map((fr: any) => {
+-            const response = fr.functionResponse.response;
+-
+-            // Convert string response to object
+-            // Gemini API requires function response to be a Struct (JSON-serializable object)
++            const funcResponse = fr.functionResponse.response;
+             let responseObject: Record<string, any>;
+ 
+-            if (typeof response === 'string') {
+-              // For string responses, wrap in an object with a text field
+-              // This is the standard way to return text results from functions
+-              responseObject = {
+-                text: response,
+-              };
+-            } else if (typeof response === 'object' && response !== null && !Array.isArray(response)) {
+-              // Already a plain object, use it directly
+-              // Ensure it's a plain object (not a class instance)
+-              responseObject = JSON.parse(JSON.stringify(response));
++            if (typeof funcResponse === 'string') {
++              responseObject = { text: funcResponse };
++            } else if (typeof funcResponse === 'object' && funcResponse !== null && !Array.isArray(funcResponse)) {
++              responseObject = JSON.parse(JSON.stringify(funcResponse));
+             } else {
+-              // Fallback: wrap primitive or array in object
+-              responseObject = {
+-                result: response,
+-              };
++              responseObject = { result: funcResponse };
+             }
+ 
+             return {
+@@ -2012,39 +2120,94 @@
+           });
+ 
+           // Send function responses back to the chat
+-          const followUpResult = await chat.sendMessage(functionResponseParts);
+-          const finalText = followUpResult.response.text();
+-
+-          return {
+-            text: finalText,
+-            functionCall: {
+-              name: functionCalls[0].name,
+-              args: functionCalls[0].args as Record<string, any>,
+-            },
+-          };
++          const followUpResult = await withTimeout(
++            chat.sendMessage(functionResponseParts),
++            60000,
++            'Gemini sendMessage followUp'
++          );
++          currentResponse = followUpResult.response;
+         } catch (error: any) {
+           logger.error('Error sending function response:', error);
+-          // If function response fails, return the function result as text
++          // If sending function response fails, return the function result as text directly
+           const functionResultText = functionResults
+             .map((fr: any) => {
+-              const response = fr.functionResponse.response;
+-              return typeof response === 'string' ? response : JSON.stringify(response);
++              const res = fr.functionResponse.response;
++              return typeof res === 'string' ? res : JSON.stringify(res);
+             })
+             .join('\n\n');
+-
++            
+           return {
+             text: functionResultText,
+             functionCall: {
+-              name: functionCalls[0].name,
+-              args: functionCalls[0].args as Record<string, any>,
++              name: allFunctionCalls[0].name,
++              args: allFunctionCalls[0].args as Record<string, any>,
+             },
+           };
+         }
+       }
+ 
+-      // Get response text
+-      const responseText = response.text();
++      // After all function calls (or if none), get the final text response
++      try {
++        textContent = currentResponse.text() || '';
++      } catch (e: any) {
++        textContent = '';
++        if (e.message?.includes('blocked') || e.message?.includes('Blocked') ||
++            currentResponse?.promptFeedback?.blockReason ||
++            currentResponse?.candidates?.[0]?.finishReason) {
++          const blockReason = currentResponse?.promptFeedback?.blockReason
++            || currentResponse?.candidates?.[0]?.finishReason
++            || 'UNKNOWN';
++          logger.warn(`Gemini response blocked: ${blockReason}`, e.message);
++        } else {
++          logger.warn('Gemini text() threw:', e.message);
++        }
++      }
+ 
++      // Check if response contains code blocks that look like function calls
++      if (allFunctionCalls.length === 0) {
++        if (textContent.includes('create_order') && textContent.includes('customer_name')) {
++          logger.warn('Detected code output instead of function call. Response may need manual parsing.');
++        }
++      }
++
++      // If textContent is empty, provide a meaningful fallback based on function calls
++      if (!textContent) {
++        if (allFunctionCalls.length > 0) {
++          logger.warn(`Gemini returned empty text after ${allFunctionCalls.length} function calls`);
++          const lastFunc = allFunctionCalls[allFunctionCalls.length - 1];
++          if (lastFunc.name === 'search_products' || lastFunc.name === 'get_product_details') {
++            const results = lastFunctionResults.filter(r => !r.includes('[أمر صريح للنظام'));
++            textContent = results.length > 0
++              ? results.join('\n\n')
++              : 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
++          } else if (lastFunc.name === 'create_order') {
++            textContent = 'تم استلام طلبك وجاري معالجته بنجاح.';
++          } else if (lastFunc.name === 'initiate_payment') {
++            textContent = 'تم تجهيز رابط الدفع لطلبك.';
++          } else {
++            textContent = 'لقد قمت بتنفيذ طلبك، ولكن لم أتمكن من صياغة رد مناسب. يرجى التحقق أو إعادة المحاولة.';
++          }
++        } else {
++          const blockInfo = currentResponse?.promptFeedback?.blockReason || currentResponse?.candidates?.[0]?.finishReason;
++          if (blockInfo) {
++            logger.warn(`Gemini blocked response: ${blockInfo}`);
++            return { text: `عذراً، لم أتمكن من معالجة طلبك بسبب سياسات المحتوى. يرجى إعادة صياغة رسالتك بطريقة مختلفة.` };
++          }
++          logger.warn('Gemini returned an empty response text with no function calls');
++          return { text: 'عذراً، لم أتمكن من استيعاب طلبك. يرجى إعادة صياغته مرة أخرى.' };
++        }
++      }
++
++      if (allFunctionCalls.length > 0) {
++        return {
++          text: textContent,
++          functionCall: {
++            name: allFunctionCalls[0].name,
++            args: allFunctionCalls[0].args as Record<string, any>,
++          },
++        };
++      }
++
+       // CRITICAL SECURITY CHECK: Detect fake order creation
+       // Check if response claims to have created an order without actually calling create_order
+       const fakeOrderPatterns = [
+@@ -2055,13 +2218,13 @@
+         /order.*number.*\d+/i,
+       ];
+ 
+-      const hasFakeOrder = fakeOrderPatterns.some(pattern => pattern.test(responseText));
+-      const hasCreateOrderCall = functionCalls && functionCalls.some((fc: any) => fc.name === 'create_order');
++      const hasFakeOrder = fakeOrderPatterns.some(pattern => pattern.test(textContent));
++      const hasCreateOrderCall = allFunctionCalls.some((fc: any) => fc.name === 'create_order');
+ 
+       if (hasFakeOrder && !hasCreateOrderCall) {
+         logger.error('CRITICAL SECURITY: Detected fake order creation attempt!', {
+-          responseText: responseText.substring(0, 200),
+-          functionCalls: functionCalls?.map((fc: any) => fc.name),
++          responseText: textContent.substring(0, 200),
++          functionCalls: allFunctionCalls.map((fc: any) => fc.name),
+         });
+         return {
+           text: 'عذراً، حدث خطأ. لا يمكنني إنشاء الطلب بدون استخدام النظام. يرجى المحاولة مرة أخرى أو الاتصال بالدعم.',
+@@ -2070,15 +2233,15 @@
+ 
+       // Check if response contains code blocks (indicating Gemini tried to write code instead of function calling)
+       // This is a critical error - Gemini should use Function Calling, not write code
+-      if (responseText.includes('{{tool_code}}') ||
+-        responseText.includes('print(') ||
+-        responseText.includes('def ') ||
+-        responseText.includes('function ') ||
+-        responseText.includes('```python') ||
+-        responseText.includes('```javascript') ||
+-        (responseText.includes('create_order(') && responseText.includes('customer_name=') && !responseText.includes('functionResponse'))) {
++      if (textContent.includes('{{tool_code}}') ||
++        textContent.includes('print(') ||
++        textContent.includes('def ') ||
++        textContent.includes('function ') ||
++        textContent.includes('```python') ||
++        textContent.includes('```javascript') ||
++        (textContent.includes('create_order(') && textContent.includes('customer_name=') && !textContent.includes('functionResponse'))) {
+         logger.error('CRITICAL ERROR: Gemini wrote code instead of using Function Calling!');
+-        logger.error('Response contains code. First 500 chars:', responseText.substring(0, 500));
++        logger.error('Response contains code. First 500 chars:', textContent.substring(0, 500));
+         logger.error('This should not happen - Gemini should use Function Calling API, not write code');
+ 
+         // Return error message to user
+@@ -2088,7 +2251,7 @@
+       }
+ 
+       return {
+-        text: responseText,
++        text: textContent,
+       };
+     } catch (error: any) {
+       logger.error(`Error generating Gemini response with functions (fallback: ${useFallbackModel}):`, {
+@@ -2169,6 +2332,24 @@
+           topP: 0.95,
+           maxOutputTokens: 2048,
+         },
++        safetySettings: [
++          {
++            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++          {
++            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++          {
++            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++          {
++            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
++            threshold: HarmBlockThreshold.BLOCK_NONE,
++          },
++        ],
+         systemInstruction: systemPrompt,
+         tools: [
+           {
+@@ -2214,38 +2395,48 @@
+       logger.info(`Sending multimodal request to Gemini: ${mediaData.mimeType}, text: ${(userMessage || '[auto-prompt]').substring(0, 50)}`);
+ 
+       // Send multimodal message
+-      const result = await chat.sendMessage(parts);
+-      const response = result.response;
++      const result = await withTimeout(
++        chat.sendMessage(parts),
++        60000,
++        'Gemini sendMessage media'
++      );
+ 
+-      // Check for function calls (same logic as generateResponseWithFunctions)
+-      let functionCalls: any[] = [];
+-      try {
+-        if (typeof response.functionCalls === 'function') {
+-          const calls = response.functionCalls();
+-          if (calls && calls.length > 0) {
+-            functionCalls = calls;
+-          }
+-        }
+-      } catch (e) {
+-        // Ignore
+-      }
++      // Support up to 5 chained function calls (limit to prevent infinite loops)
++      let currentResponse = result.response;
++      let allFunctionCalls: any[] = [];
++      let textContent = '';
++      let lastFunctionResults: string[] = [];
+ 
+-      if (functionCalls.length === 0) {
++      for (let iteration = 0; iteration < 5; iteration++) {
++        let functionCalls: any[] = [];
++        
+         try {
+-          const responseParts = response.candidates?.[0]?.content?.parts || [];
+-          const functionCallParts = responseParts.filter((part: any) => part.functionCall);
+-          if (functionCallParts.length > 0) {
+-            functionCalls = functionCallParts.map((part: any) => part.functionCall);
++          if (typeof currentResponse.functionCalls === 'function') {
++            const calls = currentResponse.functionCalls();
++            if (calls && calls.length > 0) {
++              functionCalls = calls;
++            }
+           }
+-        } catch (e) {
+-          // Ignore
++        } catch (e) {}
++
++        if (functionCalls.length === 0) {
++          try {
++            const parts = currentResponse.candidates?.[0]?.content?.parts || [];
++            const functionCallParts = parts.filter((part: any) => part.functionCall);
++            if (functionCallParts.length > 0) {
++              functionCalls = functionCallParts.map((part: any) => part.functionCall);
++            }
++          } catch (e) {}
+         }
+-      }
+ 
+-      // Execute function calls if any
+-      if (functionCalls && functionCalls.length > 0) {
+-        logger.info(`Function calls from media message: ${functionCalls.length}`);
++        if (functionCalls.length === 0) {
++          break; // No more function calls, we are done
++        }
+ 
++        logger.info(`Function calls from media message (iteration ${iteration + 1}): ${functionCalls.length}`);
++        allFunctionCalls.push(...functionCalls);
++
++        // Execute function calls
+         const functionResults = await Promise.all(
+           functionCalls.map(async (fc: any) => {
+             logger.info(`Executing function: ${fc.name}`, JSON.stringify(fc.args));
+@@ -2253,6 +2444,7 @@
+               { name: fc.name, args: fc.args as Record<string, any> },
+               customerPhone
+             );
++            lastFunctionResults.push(typeof fnResult === 'string' ? fnResult : JSON.stringify(fnResult));
+             return {
+               functionResponse: {
+                 name: fc.name,
+@@ -2281,16 +2473,12 @@
+             };
+           });
+ 
+-          const followUpResult = await chat.sendMessage(functionResponseParts);
+-          const finalText = followUpResult.response.text();
+-
+-          return {
+-            text: finalText,
+-            functionCall: {
+-              name: functionCalls[0].name,
+-              args: functionCalls[0].args as Record<string, any>,
+-            },
+-          };
++          const followUpResult = await withTimeout(
++            chat.sendMessage(functionResponseParts),
++            60000,
++            'Gemini sendMessage followUp media'
++          );
++          currentResponse = followUpResult.response;
+         } catch (error: any) {
+           logger.error('Error sending function response (media):', error);
+           const functionResultText = functionResults
+@@ -2303,16 +2491,63 @@
+           return {
+             text: functionResultText,
+             functionCall: {
+-              name: functionCalls[0].name,
+-              args: functionCalls[0].args as Record<string, any>,
++              name: allFunctionCalls[0].name,
++              args: allFunctionCalls[0].args as Record<string, any>,
+             },
+           };
+         }
+       }
+ 
+-      // No function calls - return text response
+-      const responseText = response.text();
+-      return { text: responseText };
++      // After all function calls (or if none), get the final text response
++      try {
++        textContent = currentResponse.text() || '';
++      } catch (e: any) {
++        textContent = '';
++        if (e.message?.includes('blocked') || e.message?.includes('Blocked') ||
++            currentResponse?.promptFeedback?.blockReason ||
++            currentResponse?.candidates?.[0]?.finishReason) {
++          const blockReason = currentResponse?.promptFeedback?.blockReason
++            || currentResponse?.candidates?.[0]?.finishReason
++            || 'UNKNOWN';
++          logger.warn(`Gemini media response blocked: ${blockReason}`, e.message);
++        } else {
++          logger.warn('Gemini media text() threw:', e.message);
++        }
++      }
++
++      // If textContent is empty, provide a meaningful fallback based on function calls
++      if (!textContent) {
++        if (allFunctionCalls.length > 0) {
++          logger.warn(`Gemini returned empty text after ${allFunctionCalls.length} function calls in media mode`);
++          const lastFunc = allFunctionCalls[allFunctionCalls.length - 1];
++          if (lastFunc.name === 'search_products' || lastFunc.name === 'get_product_details') {
++            const results = lastFunctionResults.filter(r => !r.includes('[أمر صريح للنظام'));
++            textContent = results.length > 0
++              ? results.join('\n\n')
++              : 'لقد بحثت عن طلبك ولكن يبدو أنني لم أتمكن من العثور على النتيجة الدقيقة. يرجى التأكد من اسم المنتج أو تزويدي بتفاصيل أكثر.';
++          } else if (lastFunc.name === 'create_order') {
++            textContent = 'تم استلام طلبك وجاري معالجته بنجاح.';
++          } else if (lastFunc.name === 'initiate_payment') {
++            textContent = 'تم تجهيز رابط الدفع لطلبك.';
++          } else if (lastFunc.name === 'calculate_order_total') {
++            textContent = 'تم حساب تكلفة الطلب. يرجى تأكيد الطلب للبدء في تجهيزه.';
++          } else {
++            textContent = 'لقد قمت بتنفيذ طلبك، ولكن لم أتمكن من صياغة رد مناسب. يرجى التحقق أو إعادة المحاولة.';
++          }
++        }
++      }
++
++      if (allFunctionCalls.length > 0) {
++        return {
++          text: textContent,
++          functionCall: {
++            name: allFunctionCalls[0].name,
++            args: allFunctionCalls[0].args as Record<string, any>,
++          },
++        };
++      }
++
++      return { text: textContent };
+     } catch (error: any) {
+       logger.error(`Error generating Gemini response with media (fallback: ${useFallbackModel}):`, {
+         status: error.status,
