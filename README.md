@@ -65,6 +65,8 @@ cp .env.example .env
 
 توثيق واجهة الحالة، رمز QR، والتحديثات الفورية متاح في [docs/status-api.md](docs/status-api.md).
 
+قواعد التطوير الإلزامية لأي مساهم أو Agent تبدأ من [AGENTS.md](AGENTS.md)، والتفاصيل والقوالب موجودة في [docs/development-rules](docs/development-rules/README.md).
+
 ### وضع التطوير
 
 ```bash
