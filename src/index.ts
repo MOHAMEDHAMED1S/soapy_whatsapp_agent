@@ -5,6 +5,7 @@ import { productService } from './services/ProductService';
 import { geminiService } from './services/GeminiService';
 import { whatsappBot } from './bot/WhatsAppBot';
 import { messageHandler } from './bot/MessageHandler';
+import { statusApiService } from './services/StatusApiService';
 
 let restartTimer: NodeJS.Timeout | null = null;
 let isRestarting = false;
@@ -23,6 +24,7 @@ const shutdown = async (signal: string) => {
     
     await whatsappBot.destroy();
     logger.info('WhatsApp bot destroyed');
+    await statusApiService.stop();
   } catch (error) {
     logger.error('Error during shutdown:', error);
     exitCode = 1;
@@ -60,6 +62,7 @@ const restartProcess = async (reason: string) => {
     }
     geminiService.stopAutoUpdate();
     await whatsappBot.destroy();
+    await statusApiService.stop();
   } catch (error) {
     logger.error('Error during restart cleanup:', error);
     exitCode = 1;
@@ -116,6 +119,16 @@ const main = async () => {
     logger.info('Starting WhatsApp Agent...');
     logger.info(`API Base URL: ${config.api.baseUrl}`);
     logger.info(`Database Path: ${config.database.path}`);
+
+    statusApiService.setComponentStatusProvider(() => ({
+      database: databaseManager.getStatusSnapshot(),
+      whatsappRuntime: whatsappBot.getStatusSnapshot(),
+      messageProcessing: messageHandler.getStatusSnapshot(),
+      productCatalog: productService.getStatusSnapshot(),
+      gemini: geminiService.getStatusSnapshot(),
+    }));
+    const statusApiPort = Number(process.env.STATUS_API_PORT || '3002');
+    await statusApiService.start(statusApiPort);
 
     // Initialize database
     logger.info('Initializing database...');

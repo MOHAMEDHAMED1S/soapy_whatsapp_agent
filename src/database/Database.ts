@@ -107,6 +107,15 @@ export class DatabaseManager {
     return this.db;
   }
 
+  getStatusSnapshot(): Record<string, unknown> {
+    return {
+      open: this.db.open,
+      readonly: this.db.readonly,
+      inTransaction: this.db.inTransaction,
+      journalMode: this.db.pragma('journal_mode', { simple: true }),
+    };
+  }
+
   close(): void {
     this.db.close();
     logger.info('Database connection closed');
@@ -115,4 +124,3 @@ export class DatabaseManager {
 
 // Export singleton instance
 export const databaseManager = new DatabaseManager();
-

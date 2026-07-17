@@ -172,6 +172,18 @@ export class ProductService {
     return this.catalog;
   }
 
+  getStatusSnapshot(): Record<string, unknown> {
+    const cacheAgeMs = this.lastUpdateTime ? Date.now() - this.lastUpdateTime.getTime() : null;
+    return {
+      catalogLoaded: this.catalog !== null,
+      productCount: this.catalog?.products.length || 0,
+      lastUpdatedAt: this.lastUpdateTime?.toISOString() || null,
+      cacheAgeMs,
+      cacheDurationMs: this.CACHE_DURATION,
+      cacheFresh: cacheAgeMs !== null && cacheAgeMs < this.CACHE_DURATION,
+    };
+  }
+
   // Clear cache
   clearCache(): void {
     this.catalog = null;
@@ -311,4 +323,3 @@ export class ProductService {
 
 // Export singleton instance
 export const productService = new ProductService();
-

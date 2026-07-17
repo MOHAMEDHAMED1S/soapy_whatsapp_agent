@@ -195,6 +195,32 @@ ${catalogText}
     }
   }
 
+  getStatusSnapshot(): Record<string, unknown> {
+    const pendingOrdersByStatus = {
+      creating: 0,
+      pending: 0,
+      failed: 0,
+    };
+    for (const order of this.pendingOrders.values()) {
+      pendingOrdersByStatus[order.status]++;
+    }
+
+    return {
+      model: config.gemini.model,
+      fallbackModel: config.gemini.fallbackModel || null,
+      catalogLoaded: this.productCatalog.length > 0,
+      catalogCharacterCount: this.productCatalog.length,
+      catalogUpdateInProgress: this.updateInProgress,
+      catalogAutoUpdateRunning: this.updateInterval !== null,
+      catalogUpdateIntervalMs: this.UPDATE_INTERVAL_MS,
+      maxProductsInPrompt: this.MAX_PRODUCTS_IN_PROMPT,
+      pendingOrders: {
+        total: this.pendingOrders.size,
+        byStatus: pendingOrdersByStatus,
+      },
+    };
+  }
+
   // Get system prompt with current order data
   private getSystemPrompt(orderData?: any): string {
     // Get admin prompt from database (lazy import to avoid circular dependency)

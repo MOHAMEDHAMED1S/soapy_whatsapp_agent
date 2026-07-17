@@ -153,6 +153,20 @@ export class MessageHandler {
     return this.activeProcessingCount === 0 && this.processingQueue.size === 0;
   }
 
+  getStatusSnapshot(): Record<string, unknown> {
+    return {
+      activeProcessingCount: this.activeProcessingCount,
+      queuedConversationCount: this.processingQueue.size,
+      maxQueueSize: this.MAX_QUEUE_SIZE,
+      utilizationPercent: Math.round((this.processingQueue.size / this.MAX_QUEUE_SIZE) * 100),
+      botInterfaceConfigured: Boolean(
+        this.sendMessageHandler &&
+        this.sendTypingIndicatorHandler &&
+        this.clearTypingIndicatorHandler
+      ),
+    };
+  }
+
   // Process a single message
   private async processMessage(phone: string, userMessage: string, chatId?: string, msg?: Message): Promise<void> {
     // Default to phone if chatId not provided (backward compatibility)

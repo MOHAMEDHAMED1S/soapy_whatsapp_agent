@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { withTimeout } from '../utils/timeout';
+import { statusApiService } from '../services/StatusApiService';
 
 export class WhatsAppBot {
   private client: Client;
@@ -73,22 +74,54 @@ export class WhatsAppBot {
     // QR Code event
     this.client.on('qr', (qr) => {
       logger.info('QR Code received. Please scan with WhatsApp:');
+      statusApiService.setWhatsAppQr(qr);
       qrcode.generate(qr, { small: true });
     });
 
     // Ready event
     this.client.on('ready', () => {
       this.isReady = true;
+      this.isReconnecting = false;
+      this.reconnectAttempts = 0;
+      const now = new Date().toISOString();
+      statusApiService.clearWhatsAppQr(false);
+      statusApiService.updateWhatsApp({
+        state: 'ready',
+        ready: true,
+        authenticated: true,
+        reconnecting: false,
+        reconnectAttempts: 0,
+        lastReadyAt: now,
+        lastError: undefined,
+        nextReconnectDelayMs: undefined,
+      });
       logger.info('WhatsApp client is ready!');
     });
 
     // Authenticated event
     this.client.on('authenticated', () => {
+      const now = new Date().toISOString();
+      statusApiService.clearWhatsAppQr(false);
+      statusApiService.updateWhatsApp({
+        state: 'authenticated',
+        ready: false,
+        authenticated: true,
+        lastAuthenticatedAt: now,
+        lastError: undefined,
+      });
       logger.info('WhatsApp client authenticated');
     });
 
     // Authentication failure event
     this.client.on('auth_failure', (msg) => {
+      statusApiService.clearWhatsAppQr(false);
+      statusApiService.updateWhatsApp({
+        state: 'auth_failure',
+        ready: false,
+        authenticated: false,
+        reconnecting: false,
+        lastError: msg,
+      });
       logger.error('Authentication failure:', msg);
     });
 
@@ -104,6 +137,14 @@ export class WhatsAppBot {
       }
       this.lastDisconnectedTime = now;
 
+      statusApiService.clearWhatsAppQr(false);
+      statusApiService.updateWhatsApp({
+        state: 'disconnected',
+        ready: false,
+        reconnecting: false,
+        lastDisconnectedAt: new Date(now).toISOString(),
+        lastDisconnectedReason: String(reason),
+      });
       logger.warn('WhatsApp client disconnected:', reason);
 
       // Stop health check during reconnection
@@ -210,6 +251,13 @@ export class WhatsAppBot {
 
     while (initAttempts < maxInitAttempts) {
       try {
+        statusApiService.updateWhatsApp({
+          state: 'initializing',
+          ready: false,
+          reconnecting: false,
+          reconnectAttempts: initAttempts,
+          maxReconnectAttempts: this.MAX_RECONNECT_ATTEMPTS,
+        });
         // Clean up any stale browser processes/locks from previous crashes
         await this.cleanupStaleBrowser();
 
@@ -227,6 +275,12 @@ export class WhatsAppBot {
         return; // Success, exit the retry loop
       } catch (error: any) {
         initAttempts++;
+        statusApiService.updateWhatsApp({
+          state: initAttempts >= maxInitAttempts ? 'error' : 'initializing',
+          ready: false,
+          reconnectAttempts: initAttempts,
+          lastError: error.message || String(error),
+        });
         if (error.name === 'TimeoutError') {
           logger.error('Timeout while initializing WhatsApp bot. This may happen if:');
           logger.error('1. No internet connection');
@@ -279,17 +333,30 @@ export class WhatsAppBot {
 
     this.isReconnecting = true;
     this.isReady = false;
+    statusApiService.updateWhatsApp({
+      state: 'reconnecting',
+      ready: false,
+      reconnecting: true,
+      reconnectAttempts: this.reconnectAttempts,
+    });
 
     while (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
       try {
         const delay = this.RECONNECT_BASE_DELAY * Math.pow(2, this.reconnectAttempts);
+        statusApiService.updateWhatsApp({
+          state: 'reconnecting',
+          ready: false,
+          reconnecting: true,
+          reconnectAttempts: this.reconnectAttempts,
+          nextReconnectDelayMs: delay,
+        });
         logger.info(`Attempting to reconnect in ${delay / 1000}s... (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})`);
 
         await new Promise(resolve => setTimeout(resolve, delay));
 
         // Destroy old client and create new one
         try {
-          await this.destroy(); // Use our robust destroy method
+          await this.destroy(false); // Preserve reconnecting state while replacing the client.
         } catch (destroyError) {
           logger.warn('Error destroying client during reconnect:', destroyError);
         }
@@ -307,11 +374,28 @@ export class WhatsAppBot {
         // Success!
         this.reconnectAttempts = 0;
         this.isReconnecting = false;
+        statusApiService.updateWhatsApp({
+          state: 'ready',
+          ready: true,
+          authenticated: true,
+          reconnecting: false,
+          reconnectAttempts: 0,
+          lastReadyAt: new Date().toISOString(),
+          lastError: undefined,
+          nextReconnectDelayMs: undefined,
+        });
         this.startHealthCheck();
         logger.info('Successfully reconnected to WhatsApp!');
         return;
       } catch (error: any) {
         this.reconnectAttempts++;
+        statusApiService.updateWhatsApp({
+          state: 'reconnecting',
+          ready: false,
+          reconnecting: true,
+          reconnectAttempts: this.reconnectAttempts,
+          lastError: error.message || String(error),
+        });
         logger.error(`Reconnection attempt ${this.reconnectAttempts} failed:`, error.message || error);
       }
     }
@@ -319,6 +403,14 @@ export class WhatsAppBot {
     // All attempts failed
     logger.error(`Max reconnection attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached. Please restart the bot manually.`);
     this.isReconnecting = false;
+    statusApiService.updateWhatsApp({
+      state: 'error',
+      ready: false,
+      reconnecting: false,
+      reconnectAttempts: this.reconnectAttempts,
+      nextReconnectDelayMs: undefined,
+      lastError: `Max reconnection attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached`,
+    });
   }
 
   // Start periodic health check
@@ -620,6 +712,18 @@ export class WhatsAppBot {
     return this.isReady;
   }
 
+  getStatusSnapshot(): Record<string, unknown> {
+    return {
+      ready: this.isReady,
+      reconnecting: this.isReconnecting,
+      reconnectAttempts: this.reconnectAttempts,
+      maxReconnectAttempts: this.MAX_RECONNECT_ATTEMPTS,
+      healthCheckRunning: this.healthCheckInterval !== null,
+      healthCheckInProgress: this.healthCheckInProgress,
+      activeTypingSessions: this.typingSessions.size,
+    };
+  }
+
   setMessageHandler(handler: (msg: Message) => Promise<void>): void {
     this.onMessageReceived = handler;
   }
@@ -653,7 +757,7 @@ export class WhatsAppBot {
   }
 
   // Destroy the bot
-  async destroy(): Promise<void> {
+  async destroy(publishStatus: boolean = true): Promise<void> {
     try {
       this.stopHealthCheck();
 
@@ -662,8 +766,18 @@ export class WhatsAppBot {
 
       if (!this.client) {
         this.isReady = false;
-        this.isReconnecting = false;
-        this.reconnectAttempts = 0;
+        if (publishStatus) {
+          this.isReconnecting = false;
+          this.reconnectAttempts = 0;
+          statusApiService.clearWhatsAppQr();
+          statusApiService.updateWhatsApp({
+            state: 'destroyed',
+            ready: false,
+            authenticated: false,
+            reconnecting: false,
+            reconnectAttempts: 0,
+          });
+        }
         logger.info('WhatsApp bot destroyed (no client was active)');
         return;
       }
@@ -701,8 +815,18 @@ export class WhatsAppBot {
       this.removeBrowserLockFiles();
 
       this.isReady = false;
-      this.isReconnecting = false;
-      this.reconnectAttempts = 0;
+      if (publishStatus) {
+        this.isReconnecting = false;
+        this.reconnectAttempts = 0;
+        statusApiService.clearWhatsAppQr();
+        statusApiService.updateWhatsApp({
+          state: 'destroyed',
+          ready: false,
+          authenticated: false,
+          reconnecting: false,
+          reconnectAttempts: 0,
+        });
+      }
       logger.info('WhatsApp bot destroyed');
     } catch (error) {
       logger.error('Error destroying WhatsApp bot:', error);
