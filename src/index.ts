@@ -153,9 +153,9 @@ const main = async () => {
     // MED-5: Dependency Injection to resolve circular dependency
     whatsappBot.setMessageHandler((msg) => messageHandler.handleMessage(msg));
     messageHandler.setWhatsAppBotInterface({
-      sendMessage: (phone, text) => whatsappBot.sendMessage(phone, text),
-      sendTypingIndicator: (phone) => whatsappBot.sendTypingIndicator(phone),
-      clearTypingIndicator: (phone) => whatsappBot.clearTypingIndicator(phone),
+      sendMessage: (phone, text, chatId) => whatsappBot.sendMessage(phone, text, 0, chatId),
+      sendTypingIndicator: (phone, chatId) => whatsappBot.sendTypingIndicator(phone, chatId),
+      clearTypingIndicator: (phone, chatId) => whatsappBot.clearTypingIndicator(phone, chatId),
     });
 
     // Initialize WhatsApp bot (this is blocking and required)

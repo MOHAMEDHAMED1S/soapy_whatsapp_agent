@@ -1,3 +1,5 @@
+import util from 'util';
+
 export enum LogLevel {
   DEBUG = 'debug',
   INFO = 'info',
@@ -21,9 +23,18 @@ class Logger {
 
   private formatMessage(level: LogLevel, message: string, ...args: any[]): string {
     const timestamp = new Date().toISOString();
-    const formattedArgs = args.length > 0 ? ' ' + args.map(arg => 
-      typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-    ).join(' ') : '';
+    const formattedArgs = args.length > 0 ? ' ' + args.map(arg => {
+      if (typeof arg === 'string') {
+        return arg;
+      }
+      if (arg instanceof Error) {
+        return arg.stack || `${arg.name}: ${arg.message}`;
+      }
+      if (typeof arg === 'object' && arg !== null) {
+        return util.inspect(arg, { depth: 5, colors: false });
+      }
+      return String(arg);
+    }).join(' ') : '';
     return `[${timestamp}] [${level.toUpperCase()}] ${message}${formattedArgs}`;
   }
 
@@ -53,4 +64,3 @@ class Logger {
 }
 
 export const logger = new Logger(process.env.LOG_LEVEL || 'info');
-

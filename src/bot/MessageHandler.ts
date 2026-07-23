@@ -21,14 +21,14 @@ export class MessageHandler {
   private processingQueue: Map<string, Promise<void>> = new Map();
   // Token system: every phone number has a token representing the current valid processing
   private processingTokens: Map<string, symbol> = new Map();
-  private sendMessageHandler?: (phone: string, text: string) => Promise<any>;
-  private sendTypingIndicatorHandler?: (phone: string) => Promise<any>;
-  private clearTypingIndicatorHandler?: (phone: string) => Promise<any>;
+  private sendMessageHandler?: (phone: string, text: string, chatId?: string) => Promise<any>;
+  private sendTypingIndicatorHandler?: (phone: string, chatId?: string) => Promise<any>;
+  private clearTypingIndicatorHandler?: (phone: string, chatId?: string) => Promise<any>;
 
   setWhatsAppBotInterface(handlers: {
-    sendMessage: (phone: string, text: string) => Promise<any>;
-    sendTypingIndicator: (phone: string) => Promise<any>;
-    clearTypingIndicator: (phone: string) => Promise<any>;
+    sendMessage: (phone: string, text: string, chatId?: string) => Promise<any>;
+    sendTypingIndicator: (phone: string, chatId?: string) => Promise<any>;
+    clearTypingIndicator: (phone: string, chatId?: string) => Promise<any>;
   }) {
     this.sendMessageHandler = handlers.sendMessage;
     this.sendTypingIndicatorHandler = handlers.sendTypingIndicator;
@@ -78,7 +78,7 @@ export class MessageHandler {
 
         // Send rate limit message using original chatId for direct @lid targeting
         if (this.sendMessageHandler) {
-          await this.sendMessageHandler(chatId, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.');
+          await this.sendMessageHandler(chatId, rateLimitCheck.reason || 'تم تجاوز الحد المسموح من الرسائل.', chatId);
         }
         return;
       }
@@ -135,7 +135,7 @@ export class MessageHandler {
             this.processingQueue.delete(phone);
             this.activeProcessingCount = Math.max(0, this.activeProcessingCount - 1);
         }
-        logger.error(`Timeout or error processing message from ${phone}:`, error.message);
+        logger.error(`Timeout or error processing message from ${phone}:`, error);
       }
     } catch (error) {
       logger.error('Error handling message:', error);
@@ -191,7 +191,7 @@ export class MessageHandler {
             if (estimatedSize > MAX_MEDIA_SIZE_BYTES) {
               logger.warn(`Media from ${phone} too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB), skipping`);
               if (this.sendMessageHandler) {
-                await this.sendMessageHandler(replyTo, 'عذراً، حجم الملف كبير جداً. يرجى إرسال ملف أصغر (الحد الأقصى 10 ميجابايت).');
+                await this.sendMessageHandler(replyTo, 'عذراً، حجم الملف كبير جداً. يرجى إرسال ملف أصغر (الحد الأقصى 10 ميجابايت).', chatId);
               }
               return;
             }
@@ -217,7 +217,7 @@ export class MessageHandler {
 
       // 1. Send typing indicator
       if (this.sendTypingIndicatorHandler) {
-        await this.sendTypingIndicatorHandler(replyTo);
+        await this.sendTypingIndicatorHandler(replyTo, chatId);
       }
 
       // 2. Get conversation history before adding current message
@@ -255,7 +255,7 @@ export class MessageHandler {
 
         // Clear typing indicator before sending message
         if (this.clearTypingIndicatorHandler) {
-          await this.clearTypingIndicatorHandler(replyTo);
+          await this.clearTypingIndicatorHandler(replyTo, chatId);
         }
 
         // Handle empty text response (MED-1)
@@ -263,7 +263,7 @@ export class MessageHandler {
 
         // Send response to user
         if (this.sendMessageHandler) {
-          await this.sendMessageHandler(replyTo, replyText);
+          await this.sendMessageHandler(replyTo, replyText, chatId);
         }
 
         // Add assistant message to conversation
@@ -280,7 +280,7 @@ export class MessageHandler {
 
         // Clear typing indicator in case of error
         if (this.clearTypingIndicatorHandler) {
-          await this.clearTypingIndicatorHandler(replyTo);
+          await this.clearTypingIndicatorHandler(replyTo, chatId);
         }
 
         // Send error message to user (only if not blocked) - MED-2 separate try/catch
@@ -288,7 +288,7 @@ export class MessageHandler {
           const errorMessage = 'أعتذر منك، واجهت مشكلة تقنية بسيطة أثناء معالجة طلبك للتو. هل يمكنك إعادة إرسال رسالتك وسأقوم بمساعدتك فوراً؟ شكراً لتفهمك.';
           try {
             if (this.sendMessageHandler) {
-              await this.sendMessageHandler(replyTo, errorMessage);
+              await this.sendMessageHandler(replyTo, errorMessage, chatId);
             }
           } catch (sendError) {
             logger.error('Failed to send error message to user:', sendError);

@@ -160,14 +160,21 @@ export class WhatsAppBot {
     // Message event
     this.client.on('message', async (msg: Message) => {
       try {
-        // Ignore messages from groups
-        const chat = await msg.getChat();
-        if (chat.isGroup) {
+        // Ignore messages from status
+        if (msg.from === 'status@broadcast') {
           return;
         }
 
-        // Ignore messages from status
-        if (msg.from === 'status@broadcast') {
+        // Ignore messages from groups
+        let isGroup = false;
+        try {
+          const chat = await msg.getChat();
+          isGroup = Boolean(chat?.isGroup);
+        } catch (chatError) {
+          logger.warn(`Could not fetch chat for message from ${msg.from}:`, chatError);
+        }
+
+        if (isGroup) {
           return;
         }
 
@@ -180,8 +187,16 @@ export class WhatsAppBot {
         } else {
           logger.warn('Message received but no handler configured');
         }
-      } catch (error) {
-        logger.error('Error handling message:', error);
+      } catch (error: any) {
+        const errorDetail = error?.message || error?.name || String(error);
+        const errorStack = error?.stack || '';
+        logger.error(`Error handling message from ${msg?.from || 'unknown'}: ${errorDetail}`, {
+          name: error?.name,
+          message: error?.message,
+          stack: errorStack.substring(0, 500),
+          from: msg?.from,
+          type: msg?.type,
+        });
       }
     });
 
@@ -500,7 +515,7 @@ export class WhatsAppBot {
   }
 
   // Send typing indicator and keep it alive
-  async sendTypingIndicator(phone: string): Promise<void> {
+  async sendTypingIndicator(phone: string, chatId?: string): Promise<void> {
     try {
       if (!this.isReady) {
         logger.warn(`Cannot send typing indicator - WhatsApp client not ready`);
@@ -520,13 +535,30 @@ export class WhatsAppBot {
         }
       }
 
-      const chatId = await this.resolveChatId(phone, normalizedPhone);
-      if (!chatId) {
+      // Prefer the original chat ID from the incoming message (e.g. @lid)
+      let resolvedChatId = chatId || null;
+      if (!resolvedChatId) {
+        resolvedChatId = await this.resolveChatId(phone, normalizedPhone);
+      }
+      if (!resolvedChatId) {
         logger.debug(`Could not find chat for ${normalizedPhone} - skipping typing indicator`);
         return;
       }
 
-      const chat = await this.client.getChatById(chatId);
+      const isOriginalChatId = chatId && resolvedChatId === chatId;
+      let chat;
+      if (isOriginalChatId) {
+        // For the original @lid chatId, getChatById() throws "No LID for user".
+        // Typing indicators are optional, so catch and skip gracefully.
+        try {
+          chat = await this.client.getChatById(resolvedChatId);
+        } catch (error) {
+          logger.debug(`Typing indicator skipped for ${normalizedPhone} (@lid not resolvable)`);
+          return;
+        }
+      } else {
+        chat = await this.client.getChatById(resolvedChatId);
+      }
       await chat.sendStateTyping();
       const startedAt = Date.now();
 
@@ -552,7 +584,7 @@ export class WhatsAppBot {
         }
       }, this.TYPING_REFRESH_INTERVAL);
 
-      this.typingSessions.set(normalizedPhone, { interval, chatId, chat, startedAt });
+      this.typingSessions.set(normalizedPhone, { interval, chatId: resolvedChatId, chat, startedAt });
     } catch (error) {
       // Ignore all errors in typing indicator to prevent blocking the flow
       logger.warn(`Failed to send typing indicator to ${phone} (ignored):`, error);
@@ -560,7 +592,7 @@ export class WhatsAppBot {
   }
 
   // Clear typing indicator
-  async clearTypingIndicator(phone: string): Promise<void> {
+  async clearTypingIndicator(phone: string, chatId?: string): Promise<void> {
     try {
       if (!this.isReady) {
         return;
@@ -582,18 +614,29 @@ export class WhatsAppBot {
         }
       }
 
-      // Try to clear typing state (optional - WhatsApp clears it automatically)
-      // Try multiple formats
+      // Try the original chat ID from the incoming message first
+      if (chatId) {
+        try {
+          const chat = await this.client.getChatById(chatId);
+          await chat.clearState();
+          logger.debug(`Typing indicator cleared for ${normalizedPhone} using original chatId ${chatId}`);
+          return;
+        } catch (error) {
+          logger.debug(`Failed to clear typing state using original chatId ${chatId}`);
+        }
+      }
+
+      // Fallback: try multiple formats
       const chatIdFormats = [
         `${normalizedPhone}@c.us`,
         `${normalizedPhone}@lid`,
       ];
 
-      for (const chatId of chatIdFormats) {
+      for (const fallbackId of chatIdFormats) {
         try {
-          const chat = await this.client.getChatById(chatId);
+          const chat = await this.client.getChatById(fallbackId);
           await chat.clearState();
-          logger.debug(`Typing indicator cleared for ${normalizedPhone} using ${chatId}`);
+          logger.debug(`Typing indicator cleared for ${normalizedPhone} using ${fallbackId}`);
           return; // Success, exit
         } catch (error) {
           // Try next format
@@ -610,7 +653,7 @@ export class WhatsAppBot {
   }
 
   // Send message with retry logic
-  async sendMessage(phone: string, message: string, retryCount: number = 0): Promise<Message> {
+  async sendMessage(phone: string, message: string, retryCount: number = 0, chatId?: string): Promise<Message> {
     const MAX_RETRIES = 2;
 
     try {
@@ -619,7 +662,7 @@ export class WhatsAppBot {
         if (this.isReconnecting && retryCount < MAX_RETRIES) {
           logger.info(`Client not ready, waiting for reconnection... (attempt ${retryCount + 1})`);
           await new Promise(resolve => setTimeout(resolve, 5000));
-          return this.sendMessage(phone, message, retryCount + 1);
+          return this.sendMessage(phone, message, retryCount + 1, chatId);
         }
         logger.error(`Cannot send message - WhatsApp client not ready`);
         throw new Error('WhatsApp client is not ready');
@@ -627,35 +670,52 @@ export class WhatsAppBot {
 
       const normalizedPhone = phone.split('@')[0];
 
-      // Determine which formats to try
+      // Build the list of chat IDs to try, preferring the original chatId from the incoming message
       let chatIdFormats: string[] = [];
+
+      if (chatId) {
+        // Always try the original chat ID first — it was validated by WhatsApp
+        chatIdFormats.push(chatId);
+      }
 
       if (phone.includes('@')) {
         // If phone contains @, assume it's a full chat ID and try it first
-        chatIdFormats.push(phone);
+        if (!chatIdFormats.includes(phone)) chatIdFormats.push(phone);
 
         // Also add the other formats as fallback, in case the provided ID was wrong or changed
-        // But avoid adding duplicates
-        if (!phone.endsWith('@c.us')) chatIdFormats.push(`${normalizedPhone}@c.us`);
-        if (!phone.endsWith('@lid')) chatIdFormats.push(`${normalizedPhone}@lid`);
+        if (!phone.endsWith('@c.us') && !chatIdFormats.includes(`${normalizedPhone}@c.us`)) {
+          chatIdFormats.push(`${normalizedPhone}@c.us`);
+        }
+        if (!phone.endsWith('@lid') && !chatIdFormats.includes(`${normalizedPhone}@lid`)) {
+          chatIdFormats.push(`${normalizedPhone}@lid`);
+        }
       } else {
         // If no suffix, try standard formats
-        chatIdFormats = [
-          `${normalizedPhone}@c.us`,  // Standard format
-          `${normalizedPhone}@lid`,    // LID format (for business accounts)
-        ];
+        if (!chatIdFormats.includes(`${normalizedPhone}@c.us`)) {
+          chatIdFormats.push(`${normalizedPhone}@c.us`);
+        }
+        if (!chatIdFormats.includes(`${normalizedPhone}@lid`)) {
+          chatIdFormats.push(`${normalizedPhone}@lid`);
+        }
       }
 
       let lastError: any = null;
 
-      for (const chatId of chatIdFormats) {
+      for (const targetChatId of chatIdFormats) {
         try {
-          // First, try to get the chat to check if it exists
-          await this.client.getChatById(chatId);
+          // When using the original chatId from the incoming message,
+          // skip the getChatById() check — it's proven valid since we
+          // received a message from it. whatsapp-web.js getChatById()
+          // throws "No LID for user" for @lid format even though the
+          // chat exists, so the pre-check would always fail.
+          const isOriginalChatId = chatId && targetChatId === chatId;
+          if (!isOriginalChatId) {
+            await this.client.getChatById(targetChatId);
+          }
 
-          // If chat exists, try to send message
-          const sentMessage = await this.client.sendMessage(chatId, message);
-          logger.info(`Message sent to ${normalizedPhone} using ${chatId}`);
+          // Send message
+          const sentMessage = await this.client.sendMessage(targetChatId, message);
+          logger.info(`Message sent to ${normalizedPhone} using ${targetChatId}`);
           return sentMessage;
         } catch (error: any) {
           // Check if it's a critical puppeteer error
@@ -668,7 +728,7 @@ export class WhatsAppBot {
             // If we have retries left, wait and retry
             if (retryCount < MAX_RETRIES) {
               await new Promise(resolve => setTimeout(resolve, 10000));
-              return this.sendMessage(phone, message, retryCount + 1);
+              return this.sendMessage(phone, message, retryCount + 1, chatId);
             }
 
             throw new Error('Message failed due to connection issues. Please try again.');
@@ -682,17 +742,17 @@ export class WhatsAppBot {
           }
 
           // If it's a different error, log and try next format
-          if (chatIdFormats.indexOf(chatId) < chatIdFormats.length - 1) {
-            logger.info(`Error with ${chatId}, trying next format:`, error.message);
+          if (chatIdFormats.indexOf(targetChatId) < chatIdFormats.length - 1) {
+            logger.info(`Error with ${targetChatId}, trying next format:`, error.message);
             lastError = error;
             continue;
           }
 
           // Last format failed, throw error
-          logger.error(`Error sending message to ${normalizedPhone} with ${chatId}:`, {
+          logger.error(`Error sending message to ${normalizedPhone} with ${targetChatId}:`, {
             error: error.message,
             stack: error.stack,
-            chatId,
+            chatId: targetChatId,
           });
           throw error;
         }
